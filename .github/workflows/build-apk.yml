@@ -1,0 +1,117 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build Type'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+
+jobs:
+  build:
+    name: Build Standalone Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: ☕ Setup Java 17 (JDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+
+      - name: 🤖 Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 🐘 Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 📦 Install dependencies
+        run: npm ci || npm install
+
+      - name: 🔐 Configure Build Secrets
+        run: |
+          touch .env
+          if [ -n "${{ secrets.EXPO_PUBLIC_WORKER_BASE_URL }}" ]; then
+            echo "EXPO_PUBLIC_WORKER_BASE_URL=${{ secrets.EXPO_PUBLIC_WORKER_BASE_URL }}" >> .env
+          else
+            echo "EXPO_PUBLIC_WORKER_BASE_URL=https://wispy-cherry-6934.sheztech.workers.dev" >> .env
+          fi
+          if [ -n "${{ secrets.EXPO_PUBLIC_PROXY_SECRET }}" ]; then
+            echo "EXPO_PUBLIC_PROXY_SECRET=${{ secrets.EXPO_PUBLIC_PROXY_SECRET }}" >> .env
+          fi
+
+      - name: 🛠️ Generate Native Android Project (CNG)
+        run: npx expo prebuild --platform android --clean
+
+      - name: 🔨 Compile Release APK
+        run: |
+          cd android
+          ./gradlew assembleRelease --no-daemon
+
+      - name: ✍️ Sign Release APK
+        run: |
+          APK_DIR="android/app/build/outputs/apk/release"
+          UNSIGNED_APK=$(find $APK_DIR -name "*unsigned.apk" -o -name "*release.apk" | head -n 1)
+          
+          if [ -z "$UNSIGNED_APK" ]; then
+            echo "Error: No release APK found to sign!"
+            exit 1
+          fi
+
+          echo "Found APK: $UNSIGNED_APK"
+          
+          # If a custom keystore is provided via GitHub Secrets, use it
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "Using custom keystore from repository secrets..."
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > release.keystore
+            KEY_ALIAS="${{ secrets.KEY_ALIAS || 'hindianime' }}"
+            KEY_PASS="${{ secrets.KEYSTORE_PASSWORD }}"
+          else
+            echo "Generating build keystore..."
+            keytool -genkey -v -keystore release.keystore -alias hindianime -keyalg RSA -keysize 2048 -validity 10000 -storepass hindianimepass -keypass hindianimepass -dname "CN=HindiAnime, OU=Mobile, O=HindiAnime, L=Mumbai, S=MH, C=IN"
+            KEY_ALIAS="hindianime"
+            KEY_PASS="hindianimepass"
+          fi
+
+          # Find Android SDK build-tools apksigner
+          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
+          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+          ZIPALIGN="$BUILD_TOOLS_DIR/zipalign"
+
+          # Align & Sign
+          $ZIPALIGN -v -p 4 "$UNSIGNED_APK" "$APK_DIR/HindiAnime-v1.0.0.apk" || cp "$UNSIGNED_APK" "$APK_DIR/HindiAnime-v1.0.0.apk"
+          $APKSIGNER sign --ks release.keystore --ks-key-alias "$KEY_ALIAS" --ks-pass "pass:$KEY_PASS" --key-pass "pass:$KEY_PASS" "$APK_DIR/HindiAnime-v1.0.0.apk"
+          $APKSIGNER verify "$APK_DIR/HindiAnime-v1.0.0.apk"
+          echo "Successfully created and verified signed APK at $APK_DIR/HindiAnime-v1.0.0.apk"
+
+      - name: 📤 Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HindiAnime-v1.0.0-Release-APK
+          path: android/app/build/outputs/apk/release/HindiAnime-v1.0.0.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 🚀 Publish GitHub Release (On Tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/release/HindiAnime-v1.0.0.apk
+          generate_release_notes: true
+

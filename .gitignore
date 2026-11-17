@@ -20,6 +20,12 @@ ios/
 *.keystore
 *.jks
 
+# Cloudflare Worker
+cloudflare-worker.js
+cloudflare-worker*
+wrangler.toml
+.wrangler/
+
 # Temporary and Scratch files
 scratch/
 tmp/

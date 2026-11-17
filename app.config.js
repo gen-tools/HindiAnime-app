@@ -39,6 +39,18 @@ export default {
         },
       ],
     ],
+    android: {
+      package: 'com.hindianime.app',
+      versionCode: 1,
+      adaptiveIcon: {
+        backgroundColor: '#050807',
+      },
+      permissions: [
+        'INTERNET',
+        'ACCESS_NETWORK_STATE',
+        'MODIFY_AUDIO_SETTINGS',
+      ],
+    },
     extra: {
       workerBaseUrl:
         process.env.EXPO_PUBLIC_WORKER_BASE_URL ||
