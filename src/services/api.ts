@@ -11,17 +11,14 @@
  */
 
 import { Anime, Episode, Season, LatestEpisodeItem, StreamResolutionResult } from '../types/anime';
-import { getDecryptedProxySecret } from '../utils/security';
+import { getDecryptedApiUrl, getDecryptedProxySecret } from '../utils/security';
 
 // ── Environment & Security Configuration ──────────────────────────────────────
-// Base URL can be configured via environment or falls back to production worker.
-// Secrets are encrypted into byte vectors and decoded dynamically in memory
-// so that plaintext credentials are NEVER embedded in the client APK bundle.
-const DEFAULT_WORKER_URL = 'https://wispy-cherry-6934.sheztech.workers.dev';
+// Secrets and backend endpoints are securely de-obfuscated dynamically in memory
+// so that plaintext credentials and URLs are NEVER embedded in the client APK bundle.
 
 export function getApiBaseUrl(): string {
-  const url = process.env.EXPO_PUBLIC_WORKER_BASE_URL || DEFAULT_WORKER_URL;
-  return url.replace(/\/+$/, '');
+  return getDecryptedApiUrl();
 }
 
 export function getApiHeaders(extra?: Record<string, string>): Record<string, string> {

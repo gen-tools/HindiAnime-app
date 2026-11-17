@@ -24,6 +24,7 @@ const STORAGE_KEYS = {
   FAVORITES: 'hindianime_favorites_v1',
   WATCH_HISTORY: 'hindianime_history_v1',
   USER_PREFERENCES: 'hindianime_prefs_v1',
+  USER_PROFILE: 'hindianime_profile_v1',
   HOMEPAGE_SNAPSHOT: 'hindianime_homepage_v1',
 } as const;
 
@@ -38,6 +39,16 @@ export interface UserPreferences {
   autoPlayNext: boolean;
   defaultSpeed: number;
   skipIntroEnabled: boolean;
+  downloadWifiOnly: boolean;
+  dataSaver: boolean;
+  defaultQuality: 'auto' | '1080p' | '720p' | '480p' | '360p';
+}
+
+export interface UserProfile {
+  displayName: string;
+  handle: string;
+  bio: string;
+  avatarEmoji: string;
 }
 
 const DEFAULT_PREFERENCES: UserPreferences = {
@@ -45,6 +56,16 @@ const DEFAULT_PREFERENCES: UserPreferences = {
   autoPlayNext: true,
   defaultSpeed: 1,
   skipIntroEnabled: true,
+  downloadWifiOnly: true,
+  dataSaver: false,
+  defaultQuality: 'auto',
+};
+
+const DEFAULT_PROFILE: UserProfile = {
+  displayName: 'Anime Fan',
+  handle: 'hindianime_user',
+  bio: 'Otaku Streamer',
+  avatarEmoji: '🎌',
 };
 
 // In-memory memory cache for synchronous instant access
@@ -53,6 +74,7 @@ const memCache = {
   favorites: [] as string[],
   history: [] as WatchHistoryItem[],
   preferences: DEFAULT_PREFERENCES as UserPreferences,
+  profile: DEFAULT_PROFILE as UserProfile,
   snapshot: null as HomepageSnapshot | null,
   isHydrated: false,
 };
@@ -67,12 +89,13 @@ export const LocalStorageService = {
    */
   async init(): Promise<void> {
     try {
-      const [wl, fav, hist, prefs, snap] = await Promise.all([
+      const [wl, fav, hist, prefs, snap, prof] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.WATCHLIST),
         AsyncStorage.getItem(STORAGE_KEYS.FAVORITES),
         AsyncStorage.getItem(STORAGE_KEYS.WATCH_HISTORY),
         AsyncStorage.getItem(STORAGE_KEYS.USER_PREFERENCES),
         AsyncStorage.getItem(STORAGE_KEYS.HOMEPAGE_SNAPSHOT),
+        AsyncStorage.getItem(STORAGE_KEYS.USER_PROFILE),
       ]);
 
       const safeParse = <T>(val: string | null, fallback: T): T => {
@@ -89,6 +112,7 @@ export const LocalStorageService = {
       memCache.favorites = safeParse(fav, []);
       memCache.history = safeParse(hist, []);
       memCache.preferences = { ...DEFAULT_PREFERENCES, ...safeParse(prefs, {}) };
+      memCache.profile = { ...DEFAULT_PROFILE, ...safeParse(prof, {}) };
       if (snap) {
         try {
           const parsed = JSON.parse(snap);
@@ -202,6 +226,16 @@ export const LocalStorageService = {
     memCache.preferences = { ...memCache.preferences, ...prefs };
     AsyncStorage.setItem(STORAGE_KEYS.USER_PREFERENCES, JSON.stringify(memCache.preferences)).catch(() => {});
     return memCache.preferences;
+  },
+
+  getProfile(): UserProfile {
+    return memCache.profile;
+  },
+
+  setProfile(updates: Partial<UserProfile>): UserProfile {
+    memCache.profile = { ...memCache.profile, ...updates };
+    AsyncStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(memCache.profile)).catch(() => {});
+    return memCache.profile;
   },
 
   getHomepageSnapshot(): HomepageSnapshot | null {

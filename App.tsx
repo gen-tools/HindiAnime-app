@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, BackHandler } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, StyleSheet, BackHandler, Image, Animated } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Provider } from 'react-redux';
@@ -34,6 +34,24 @@ function AppContent() {
   const [activeCategory, setActiveCategory] = useState<CategoryPageType | null>(null);
   const [searchInitialQuery, setSearchInitialQuery] = useState<string>('');
   const [animeHistory, setAnimeHistory] = useState<Anime[]>([]);
+
+  // Launch Screen State
+  const [showLaunchScreen, setShowLaunchScreen] = useState(true);
+  const launchOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    // Elegant launch screen presentation that fades out smoothly once ready
+    const timer = setTimeout(() => {
+      Animated.timing(launchOpacity, {
+        toValue: 0,
+        duration: 400,
+        useNativeDriver: true,
+      }).start(() => {
+        setShowLaunchScreen(false);
+      });
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [launchOpacity]);
 
   // Single network-fetch path for homepage data via RTK Query (cached & deduplicated)
   const { data: homepageData } = useGetHomepageQuery();
@@ -260,6 +278,23 @@ function AppContent() {
           />
         )}
       </SafeAreaView>
+
+      {/* Edge-to-Edge Launch / Splash Screen Overlay */}
+      {showLaunchScreen && (
+        <Animated.View
+          style={[
+            styles.launchOverlay,
+            { opacity: launchOpacity },
+          ]}
+          pointerEvents="none"
+        >
+          <Image
+            source={require('./assets/splash.png')}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+          />
+        </Animated.View>
+      )}
     </SafeAreaProvider>
   );
 }
@@ -285,5 +320,10 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     height: '100%',
+  },
+  launchOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: '#000000',
+    zIndex: 9999999,
   },
 });

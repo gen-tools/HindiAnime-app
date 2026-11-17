@@ -38,6 +38,7 @@ import {
   Platform,
   LogBox,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 LogBox.ignoreLogs([
   '[HindiAnimePlayer]',
@@ -55,6 +56,7 @@ import {
   VideoTrack,
 } from 'expo-video';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import { NavigationBar } from 'expo-navigation-bar';
 import { HardwareControl } from '../../utils/hardwareControl';
 import {
   Play,
@@ -101,6 +103,28 @@ const GREEN = '#22c55e';
 const DARK_BG = '#0a0f0c';
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
+// ─── Immersive mode helpers ───────────────────────────────────────────────────
+
+function enterImmersiveMode(): Promise<void> {
+  try {
+    StatusBar.setHidden(true, 'fade');
+    if (Platform.OS === 'android') {
+      NavigationBar.setHidden(true);
+    }
+  } catch { /* ignore */ }
+  return Promise.resolve();
+}
+
+function exitImmersiveMode(): Promise<void> {
+  try {
+    StatusBar.setHidden(false, 'fade');
+    if (Platform.OS === 'android') {
+      NavigationBar.setHidden(false);
+    }
+  } catch { /* ignore */ }
+  return Promise.resolve();
+}
+
 function fmt(secs: number): string {
   if (!secs || isNaN(secs) || secs < 0) return '00:00';
   const h = Math.floor(secs / 3600);
@@ -136,6 +160,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
   onError,
 }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
   // ── Playback state ──────────────────────────────────────────────────────
   const [isPlaying, setIsPlaying] = useState(autoPlay);
@@ -509,7 +534,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
       if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
       if (doubleTapTimerRef.current) clearTimeout(doubleTapTimerRef.current);
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => null);
-      StatusBar.setHidden(false, 'none');
+      exitImmersiveMode();
       HardwareControl.restoreBrightness(originalBrightnessRef.current);
       if (originalVolumeRef.current !== null) {
         HardwareControl.restoreVolume(originalVolumeRef.current);
@@ -523,11 +548,11 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
       if (propIsFullscreen) {
         setIsFullscreen(true);
         ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => null);
-        StatusBar.setHidden(true, 'fade');
+        enterImmersiveMode();
       } else {
         setIsFullscreen(false);
         ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => null);
-        StatusBar.setHidden(false, 'fade');
+        exitImmersiveMode();
       }
       showControls();
       scheduleHide();
@@ -540,12 +565,12 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
         setIsFullscreen(false);
         onFullscreenChange?.(false);
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => null);
-        StatusBar.setHidden(false, 'fade');
+        exitImmersiveMode();
       } else {
         setIsFullscreen(true);
         onFullscreenChange?.(true);
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => null);
-        StatusBar.setHidden(true, 'fade');
+        enterImmersiveMode();
       }
     } catch (e) {
       console.warn('[HindiAnimePlayer] Fullscreen toggle error:', e);
@@ -553,6 +578,16 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
     showControls();
     scheduleHide();
   }, [isFullscreen, onFullscreenChange, showControls, scheduleHide]);
+
+  // ── Android Hardware Back Button: exit fullscreen first, then propagate ──
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      toggleFullscreen();
+      return true; // consumed — do NOT navigate back to previous screen
+    });
+    return () => handler.remove();
+  }, [isFullscreen, toggleFullscreen]);
 
   // Listen to device orientation changes
   useEffect(() => {
@@ -564,11 +599,11 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
       if (isLandscapeOrientation && !isFullscreen) {
         setIsFullscreen(true);
         onFullscreenChange?.(true);
-        StatusBar.setHidden(true, 'fade');
+        enterImmersiveMode();
       } else if (!isLandscapeOrientation && isFullscreen) {
         setIsFullscreen(false);
         onFullscreenChange?.(false);
-        StatusBar.setHidden(false, 'fade');
+        exitImmersiveMode();
       }
     });
     return () => {
@@ -971,7 +1006,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
         >
 
           {/* TOP BAR */}
-          <View style={styles.topBar}>
+          <View style={[styles.topBar, isFullscreen && { paddingTop: Math.max(8, insets.top) }]}>
             <View style={styles.topLeft}>
               {/* Back Button: Exits fullscreen if in fullscreen, or triggers onBack in portrait */}
               {(isFullscreen || onBack) && (
@@ -1160,7 +1195,11 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
           )}
 
           {/* BOTTOM CONTROLS & SCRUBBER */}
-          <View style={styles.bottom}>
+          <View style={[styles.bottom, {
+            paddingBottom: isFullscreen
+              ? Math.max(8, insets.bottom)
+              : Math.max(8, insets.bottom),
+          }]}>
             {/* Rock-solid progress bar hit box (child elements have pointerEvents="none") */}
             <View
               style={styles.barHit}
@@ -1312,6 +1351,8 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     zIndex: 999999,
+    // elevation needed on Android to draw over other views including nav bar region
+    elevation: 999999,
   },
   videoBox: {
     width: '100%',

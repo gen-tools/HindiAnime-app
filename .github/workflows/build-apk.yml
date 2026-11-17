@@ -48,13 +48,16 @@ jobs:
       - name: 🔐 Configure Build Secrets
         run: |
           touch .env
-          if [ -n "${{ secrets.EXPO_PUBLIC_WORKER_BASE_URL }}" ]; then
-            echo "EXPO_PUBLIC_WORKER_BASE_URL=${{ secrets.EXPO_PUBLIC_WORKER_BASE_URL }}" >> .env
-          else
-            echo "EXPO_PUBLIC_WORKER_BASE_URL=https://wispy-cherry-6934.sheztech.workers.dev" >> .env
+          # If custom secrets are configured in GitHub Repository Secrets, inject them safely
+          if [ -n "${{ secrets.WORKER_BASE_URL }}" ]; then
+            echo "WORKER_BASE_URL=${{ secrets.WORKER_BASE_URL }}" >> .env
+          elif [ -n "${{ secrets.EXPO_PUBLIC_WORKER_BASE_URL }}" ]; then
+            echo "WORKER_BASE_URL=${{ secrets.EXPO_PUBLIC_WORKER_BASE_URL }}" >> .env
           fi
-          if [ -n "${{ secrets.EXPO_PUBLIC_PROXY_SECRET }}" ]; then
-            echo "EXPO_PUBLIC_PROXY_SECRET=${{ secrets.EXPO_PUBLIC_PROXY_SECRET }}" >> .env
+          if [ -n "${{ secrets.PROXY_SECRET }}" ]; then
+            echo "PROXY_SECRET=${{ secrets.PROXY_SECRET }}" >> .env
+          elif [ -n "${{ secrets.EXPO_PUBLIC_PROXY_SECRET }}" ]; then
+            echo "PROXY_SECRET=${{ secrets.EXPO_PUBLIC_PROXY_SECRET }}" >> .env
           fi
 
       - name: 🛠️ Generate Native Android Project (CNG)

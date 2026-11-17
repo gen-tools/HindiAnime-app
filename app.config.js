@@ -3,16 +3,17 @@
 // and from EAS Build Secrets in cloud builds.
 // SENSITIVE KEYS ARE ENCRYPTED AT BUILD-TIME TO PREVENT REVERSE-ENGINEERING.
 
-const SALT_MASK = [0x5f, 0x1d, 0x8e, 0x4a, 0x9b, 0x3c, 0x72, 0xe1];
+const SALT_MASK = [0x7a, 0x3e, 0x91, 0x5b, 0xa8, 0x24, 0x6d, 0xf0];
 
-function encryptSecret(plainText) {
-  if (!plainText || typeof plainText !== 'string') return null;
+function encryptPayload(plainText) {
+  if (!plainText || typeof plainText !== 'string' || plainText.trim().length === 0) return null;
   const part1 = [];
   const part2 = [];
-  for (let i = 0; i < plainText.length; i++) {
-    const code = plainText.charCodeAt(i);
+  const trimmed = plainText.trim();
+  for (let i = 0; i < trimmed.length; i++) {
+    const code = trimmed.charCodeAt(i);
     const s = SALT_MASK[i % SALT_MASK.length];
-    const enc = ((code ^ s) + 0x37) & 0xff;
+    const enc = ((code ^ s) + 0x4b) & 0xff;
     if (i % 2 === 0) {
       part1.push(enc);
     } else {
@@ -30,6 +31,12 @@ export default {
     orientation: 'portrait',
     userInterfaceStyle: 'dark',
     backgroundColor: '#050807',
+    icon: './assets/icon.png',
+    splash: {
+      image: './assets/splash.png',
+      resizeMode: 'contain',
+      backgroundColor: '#000000',
+    },
     plugins: [
       [
         'expo-video',
@@ -38,25 +45,46 @@ export default {
           supportsPictureInPicture: true,
         },
       ],
+      [
+        'expo-navigation-bar',
+        {
+          // Start visible; the app controls visibility at runtime via NavigationBar.setHidden()
+          hidden: false,
+          style: 'dark',
+          enforceContrast: false,
+        },
+      ],
     ],
     android: {
       package: 'com.hindianime.app',
       versionCode: 1,
       adaptiveIcon: {
-        backgroundColor: '#050807',
+        foregroundImage: './assets/adaptive-icon.png',
+        backgroundColor: '#000000',
       },
       permissions: [
         'INTERNET',
         'ACCESS_NETWORK_STATE',
         'MODIFY_AUDIO_SETTINGS',
       ],
+      // Edge-to-edge: allows the app to draw behind the status bar and nav bar.
+      // Required for proper fullscreen immersive mode on Android.
+      softwareKeyboardLayoutMode: 'resize',
+      statusBar: {
+        backgroundColor: '#00000000',
+        translucent: true,
+        barStyle: 'light-content',
+      },
+      navigationBar: {
+        backgroundColor: '#00000000',
+      },
     },
     extra: {
-      workerBaseUrl:
-        process.env.EXPO_PUBLIC_WORKER_BASE_URL ||
-        'https://wispy-cherry-6934.sheztech.workers.dev',
-      // Injected as encrypted vector payload only — raw plaintext secret is never exposed.
-      secPayload: encryptSecret(
+      // Injected as encrypted vector payloads only — raw plaintext URLs and secrets are NEVER exposed in APK.
+      urlPayload: encryptPayload(
+        process.env.WORKER_BASE_URL || process.env.EXPO_PUBLIC_WORKER_BASE_URL || ''
+      ),
+      secPayload: encryptPayload(
         process.env.PROXY_SECRET || process.env.EXPO_PUBLIC_PROXY_SECRET || ''
       ),
     },
