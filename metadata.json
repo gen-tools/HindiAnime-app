@@ -1,0 +1,6 @@
+{
+  "name": "HindiAnime - HD Anime Streaming",
+  "description": "Premium Hindi-dubbed anime streaming app featuring 3D animated hero carousel, multi-server HD player, audio track selector, episode guides, and downloads.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
