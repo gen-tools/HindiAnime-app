@@ -1,15 +1,19 @@
-import React, { useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
+  FlatList,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
+  ActivityIndicator,
+  ListRenderItemInfo,
 } from 'react-native';
 import { ArrowLeft } from 'lucide-react-native';
 import { Anime } from '../types/anime';
 import { AnimeCard } from './AnimeCard';
 import { EpisodeRowCard } from './EpisodeRowCard';
+import { useGetCatalogQuery } from '../store/api/animeApi';
 
 export type CategoryPageType =
   | 'trending'
@@ -24,6 +28,9 @@ export type CategoryPageType =
   | 'telugu'
   | 'japanese'
   | 'cartoons';
+
+/** Page types that use backend pagination instead of the homepage animeList */
+const PAGINATED_TYPES = new Set<CategoryPageType>(['series', 'movies', 'cartoons']);
 
 interface CategoryPageViewProps {
   pageType: CategoryPageType;
@@ -49,16 +56,137 @@ const PAGE_META: Record<CategoryPageType, { title: string; tag: string }> = {
   cartoons: { title: 'Cartoons & Animated Films', tag: 'Cartoons' },
 };
 
-const CategoryPageView_: React.FC<CategoryPageViewProps> = ({
-  pageType,
-  animeList,
-  onBack,
-  onSelectAnime,
-  onToggleSave,
-  savedAnimeIds,
-}) => {
-  const meta = PAGE_META[pageType] || { title: 'Anime Category', tag: 'Category' };
+/** Map CategoryPageType → catalog kind for the API */
+function toCatalogKind(pageType: CategoryPageType): 'series' | 'movies' | 'cartoons' {
+  if (pageType === 'movies') return 'movies';
+  if (pageType === 'cartoons') return 'cartoons';
+  return 'series';
+}
 
+// ─── Memoized card for the grid ─────────────────────────────────────────────
+interface GridItemProps {
+  anime: Anime;
+  rank?: number;
+  onSelect: (anime: Anime) => void;
+}
+
+const GridItem = React.memo<GridItemProps>(({ anime, rank, onSelect }) => (
+  <View style={styles.cardCol}>
+    <AnimeCard anime={anime} rank={rank} onSelect={onSelect} size="fill" />
+  </View>
+));
+
+// ─── Paginated catalog hook ──────────────────────────────────────────────────
+function usePaginatedCatalog(kind: 'series' | 'movies' | 'cartoons') {
+  const [page, setPage] = useState(1);
+  const [allItems, setAllItems] = useState<Anime[]>([]);
+  const [hasMore, setHasMore] = useState(true);
+  const seenIds = useRef(new Set<string>());
+
+  const { data, isFetching, isError } = useGetCatalogQuery({ kind, page });
+
+  // Append new page items without duplicates
+  useEffect(() => {
+    if (!data) return;
+    const fresh = data.items.filter((a) => !seenIds.current.has(a.id));
+    fresh.forEach((a) => seenIds.current.add(a.id));
+    if (fresh.length > 0) {
+      setAllItems((prev) => [...prev, ...fresh]);
+    }
+    setHasMore(data.hasMore);
+  }, [data]);
+
+  const loadNextPage = useCallback(() => {
+    if (isFetching || !hasMore) return;
+    setPage((p) => p + 1);
+  }, [isFetching, hasMore]);
+
+  return { allItems, isFetching, isError, hasMore, page, loadNextPage };
+}
+
+// ─── Paginated catalog view ──────────────────────────────────────────────────
+const PaginatedCatalogView: React.FC<{
+  pageType: CategoryPageType;
+  onSelectAnime: (anime: Anime) => void;
+}> = ({ pageType, onSelectAnime }) => {
+  const kind = toCatalogKind(pageType);
+  const { allItems, isFetching, isError, hasMore, page, loadNextPage } = usePaginatedCatalog(kind);
+  const isTrending = pageType === 'trending';
+
+  const renderItem = useCallback(
+    ({ item, index }: ListRenderItemInfo<Anime>) => (
+      <GridItem
+        anime={item}
+        rank={isTrending ? index + 1 : undefined}
+        onSelect={onSelectAnime}
+      />
+    ),
+    [isTrending, onSelectAnime]
+  );
+
+  const keyExtractor = useCallback((item: Anime) => item.id, []);
+
+  const footer = useMemo(() => {
+    if (isFetching && page > 1) {
+      return (
+        <View style={styles.footerLoader}>
+          <ActivityIndicator size="small" color="#22c55e" />
+        </View>
+      );
+    }
+    if (!hasMore && allItems.length > 0) {
+      return (
+        <View style={styles.footerEnd}>
+          <Text style={styles.footerEndText}>All titles loaded</Text>
+        </View>
+      );
+    }
+    return undefined;
+  }, [isFetching, page, hasMore, allItems.length]);
+
+  if (isError) {
+    return (
+      <View style={styles.errorBox}>
+        <Text style={styles.errorText}>Failed to load catalog. Pull to retry.</Text>
+      </View>
+    );
+  }
+
+  if (isFetching && page === 1 && allItems.length === 0) {
+    return (
+      <View style={styles.initialLoader}>
+        <ActivityIndicator size="large" color="#22c55e" />
+        <Text style={styles.loadingText}>Loading...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <FlatList
+      data={allItems}
+      renderItem={renderItem}
+      keyExtractor={keyExtractor}
+      numColumns={3}
+      onEndReached={loadNextPage}
+      onEndReachedThreshold={0.3}
+      ListFooterComponent={footer}
+      contentContainerStyle={styles.scrollContent}
+      columnWrapperStyle={styles.columnWrapper}
+      showsVerticalScrollIndicator={false}
+      removeClippedSubviews
+      windowSize={7}
+      maxToRenderPerBatch={9}
+      initialNumToRender={12}
+    />
+  );
+};
+
+// ─── Static filtered catalog view (for homepage-data-based pages) ────────────
+const StaticCatalogView: React.FC<{
+  pageType: CategoryPageType;
+  animeList: Anime[];
+  onSelectAnime: (anime: Anime) => void;
+}> = ({ pageType, animeList, onSelectAnime }) => {
   const displayedAnime = useMemo(() => {
     switch (pageType) {
       case 'trending':
@@ -67,10 +195,6 @@ const CategoryPageView_: React.FC<CategoryPageViewProps> = ({
         return animeList.filter((a) => a.isPopular || a.rating >= 8.8);
       case 'on-air':
         return animeList.filter((a) => a.isOnAir);
-      case 'series':
-        return animeList.filter((a) => a.type === 'Series');
-      case 'movies':
-        return animeList.filter((a) => a.isMovie || a.type === 'Movie');
       case 'cartoon-series':
         return animeList.filter((a) => a.isCartoon && a.type !== 'Movie');
       case 'fresh-cartoon-films':
@@ -81,8 +205,6 @@ const CategoryPageView_: React.FC<CategoryPageViewProps> = ({
         return animeList.filter((a) => (a.audioTracks || []).some((t) => t.includes('Telugu')));
       case 'japanese':
         return animeList.filter((a) => (a.audioTracks || []).some((t) => t.includes('Japanese') || t.includes('Jap')));
-      case 'cartoons':
-        return animeList.filter((a) => a.isCartoon);
       default:
         return animeList;
     }
@@ -96,6 +218,66 @@ const CategoryPageView_: React.FC<CategoryPageViewProps> = ({
     );
   }, [animeList]);
 
+  const renderItem = useCallback(
+    ({ item, index }: ListRenderItemInfo<Anime>) => (
+      <GridItem
+        anime={item}
+        rank={pageType === 'trending' ? index + 1 : undefined}
+        onSelect={onSelectAnime}
+      />
+    ),
+    [pageType, onSelectAnime]
+  );
+
+  const keyExtractor = useCallback((item: Anime) => item.id, []);
+
+  if (pageType === 'latest') {
+    return (
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.scrollContent, styles.episodesList]}
+      >
+        {latestEpisodes.map(({ ep, anime }) => (
+          <EpisodeRowCard
+            key={`cat-ep-${ep.id}`}
+            episode={ep}
+            anime={anime}
+            onSelect={() => onSelectAnime(anime)}
+          />
+        ))}
+      </ScrollView>
+    );
+  }
+
+  return (
+    <FlatList
+      data={displayedAnime}
+      renderItem={renderItem}
+      keyExtractor={keyExtractor}
+      numColumns={3}
+      contentContainerStyle={styles.scrollContent}
+      columnWrapperStyle={styles.columnWrapper}
+      showsVerticalScrollIndicator={false}
+      removeClippedSubviews
+      windowSize={7}
+      maxToRenderPerBatch={9}
+      initialNumToRender={12}
+    />
+  );
+};
+
+// ─── Main CategoryPageView ───────────────────────────────────────────────────
+const CategoryPageView_: React.FC<CategoryPageViewProps> = ({
+  pageType,
+  animeList,
+  onBack,
+  onSelectAnime,
+  onToggleSave,
+  savedAnimeIds,
+}) => {
+  const meta = PAGE_META[pageType] || { title: 'Anime Category', tag: 'Category' };
+  const isPaginated = PAGINATED_TYPES.has(pageType);
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -107,7 +289,11 @@ const CategoryPageView_: React.FC<CategoryPageViewProps> = ({
           <Text numberOfLines={1} style={styles.headerTitle}>
             {meta.title}
           </Text>
-          <Text style={styles.headerCount}>{displayedAnime.length} Titles available</Text>
+          {!isPaginated && (
+            <Text style={styles.headerCount}>
+              {animeList.length} Titles available
+            </Text>
+          )}
         </View>
         <View style={styles.tagBadge}>
           <Text style={styles.tagBadgeText}>{meta.tag}</Text>
@@ -115,36 +301,18 @@ const CategoryPageView_: React.FC<CategoryPageViewProps> = ({
       </View>
 
       {/* Content */}
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {pageType === 'latest' ? (
-          <View style={styles.episodesList}>
-            {latestEpisodes.map(({ ep, anime }) => (
-              <EpisodeRowCard
-                key={`cat-ep-${ep.id}`}
-                episode={ep}
-                anime={anime}
-                onSelect={() => onSelectAnime(anime)}
-              />
-            ))}
-          </View>
-        ) : (
-          <View style={styles.gridContainer}>
-            {displayedAnime.map((anime, idx) => (
-              <View key={`cat-${anime.id}`} style={styles.cardCol}>
-                <AnimeCard
-                  anime={anime}
-                  rank={pageType === 'trending' ? idx + 1 : undefined}
-                  onSelect={onSelectAnime}
-                  size="fill"
-                />
-              </View>
-            ))}
-          </View>
-        )}
-      </ScrollView>
+      {isPaginated ? (
+        <PaginatedCatalogView
+          pageType={pageType}
+          onSelectAnime={onSelectAnime}
+        />
+      ) : (
+        <StaticCatalogView
+          pageType={pageType}
+          animeList={animeList}
+          onSelectAnime={onSelectAnime}
+        />
+      )}
     </View>
   );
 };
@@ -207,9 +375,7 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 90,
   },
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  columnWrapper: {
     justifyContent: 'space-between',
   },
   cardCol: {
@@ -218,5 +384,38 @@ const styles = StyleSheet.create({
   },
   episodesList: {
     gap: 2,
+  },
+  footerLoader: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  footerEnd: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  footerEndText: {
+    fontSize: 11,
+    color: '#7e8b83',
+  },
+  initialLoader: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 13,
+    color: '#7e8b83',
+  },
+  errorBox: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  errorText: {
+    fontSize: 13,
+    color: '#ef4444',
+    textAlign: 'center',
   },
 });

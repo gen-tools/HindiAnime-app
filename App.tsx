@@ -1,10 +1,20 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, BackHandler } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  View,
+  StyleSheet,
+  BackHandler,
+  Platform,
+  Image,
+  Animated,
+  Dimensions,
+} from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import { NavigationBar } from 'expo-navigation-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Provider } from 'react-redux';
+import * as SplashScreen from 'expo-splash-screen';
 import { store, useAppDispatch, useAppSelector } from './src/store';
 import {
   hydrateStorage,
@@ -24,6 +34,51 @@ import { WatchPage } from './src/components/WatchPage';
 import { FloatingDock, NavTab } from './src/components/FloatingDock';
 import { LocalStorageService } from './src/services/storage';
 
+// ─── Prevent native splash from auto-hiding BEFORE any React renders ──────────
+// Must be called at module level (not inside component) for it to work reliably.
+SplashScreen.preventAutoHideAsync().catch(() => {
+  // preventAutoHideAsync may throw in Expo Go or when already hidden — ignore.
+});
+// Smooth fade-out when we hide
+SplashScreen.setOptions({ fade: true, duration: 350 });
+
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+
+// ─── JS-side splash overlay ───────────────────────────────────────────────────
+// Covers the brief gap between native splash hide + React content paint,
+// then fades out once app is ready.
+const JsSplashOverlay: React.FC<{ visible: boolean }> = ({ visible }) => {
+  const opacity = useRef(new Animated.Value(1)).current;
+  const [mounted, setMounted] = useState(true);
+
+  useEffect(() => {
+    if (!visible) {
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: 350,
+        useNativeDriver: true,
+      }).start(() => setMounted(false));
+    }
+  }, [visible, opacity]);
+
+  if (!mounted) return null;
+
+  return (
+    <Animated.View
+      style={[styles.splashOverlay, { opacity }]}
+      pointerEvents="none"
+    >
+      <Image
+        source={require('./assets/splash.png')}
+        style={styles.splashImage}
+        resizeMode="cover"
+        fadeDuration={0}
+      />
+    </Animated.View>
+  );
+};
+
+// ─── App Content ──────────────────────────────────────────────────────────────
 function AppContent() {
   const dispatch = useAppDispatch();
   const animeList = useAppSelector((state) => state.anime.animeList);
@@ -38,39 +93,57 @@ function AppContent() {
   const [animeHistory, setAnimeHistory] = useState<Anime[]>([]);
   const [isAnyFullscreen, setIsAnyFullscreen] = useState(false);
 
-  // Lock initial orientation to Portrait so Android manifest allows dynamic landscape
-  // changes while starting in portrait
+  // true = show JS splash overlay, false = fade it out
+  const [splashVisible, setSplashVisible] = useState(true);
+
+  // ── Orientation + Nav bar setup ───────────────────────────────────────────
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => null);
+    if (Platform.OS === 'android') {
+      NavigationBar.setStyle('dark');
+    }
   }, []);
 
-  // Single network-fetch path for homepage data via RTK Query (cached & deduplicated)
+  // ── Homepage network fetch (RTK Query) ────────────────────────────────────
   const { data: homepageData } = useGetHomepageQuery();
 
-  // Load persisted user data & cached snapshot after first JS frame.
-  // setTimeout(0) defers AsyncStorage reads past the initial render pass,
-  // keeping first-frame time fast on low-end devices.
+  // ── Storage hydration + splash control ───────────────────────────────────
+  // Strategy:
+  //   1. Hydrate from AsyncStorage (fast — usually <100ms)
+  //   2. Hide native splash after storage read completes
+  //   3. Fade out JS overlay after a short settle delay so React has painted
   useEffect(() => {
-    const timer = setTimeout(() => {
-      LocalStorageService.init().then(() => {
-        const storedWatchlist = LocalStorageService.getWatchlist();
-        const storedFavorites = LocalStorageService.getFavorites();
-        const snapshot = LocalStorageService.getHomepageSnapshot();
+    let cancelled = false;
+    LocalStorageService.init().then(() => {
+      if (cancelled) return;
 
-        dispatch(
-          hydrateStorage({
-            savedAnimeIds: storedWatchlist || [],
-            favoriteAnimeIds: storedFavorites || [],
-            cachedList: snapshot?.animeList,
-            cachedLatest: snapshot?.latestEpisodes,
-          })
-        );
+      const storedWatchlist = LocalStorageService.getWatchlist();
+      const storedFavorites = LocalStorageService.getFavorites();
+      const snapshot = LocalStorageService.getHomepageSnapshot();
+
+      dispatch(
+        hydrateStorage({
+          savedAnimeIds: storedWatchlist || [],
+          favoriteAnimeIds: storedFavorites || [],
+          cachedList: snapshot?.animeList,
+          cachedLatest: snapshot?.latestEpisodes,
+        })
+      );
+
+      // Hide the native splash screen
+      SplashScreen.hideAsync().catch(() => null);
+
+      // Give React one frame to paint before fading out the JS overlay
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (!cancelled) setSplashVisible(false);
+        });
       });
-    }, 0);
-    return () => clearTimeout(timer);
+    });
+    return () => { cancelled = true; };
   }, [dispatch]);
 
-  // Synchronize live RTK Query homepage data into Redux and persistent storage
+  // ── Synchronize live network data into Redux + storage ────────────────────
   useEffect(() => {
     if (homepageData && homepageData.animeList && homepageData.animeList.length > 0) {
       LocalStorageService.saveHomepageSnapshot(homepageData.animeList, homepageData.latestEpisodes);
@@ -83,17 +156,14 @@ function AppContent() {
     }
   }, [homepageData, dispatch]);
 
+  // ── Handlers ──────────────────────────────────────────────────────────────
   const handleToggleSave = useCallback(
-    (animeId: string) => {
-      dispatch(toggleSaveAnime(animeId));
-    },
+    (animeId: string) => { dispatch(toggleSaveAnime(animeId)); },
     [dispatch]
   );
 
   const handleToggleFavorite = useCallback(
-    (animeId: string) => {
-      dispatch(toggleFavoriteAnime(animeId));
-    },
+    (animeId: string) => { dispatch(toggleFavoriteAnime(animeId)); },
     [dispatch]
   );
 
@@ -109,14 +179,10 @@ function AppContent() {
 
   const handleBackFromWatch = useCallback(() => {
     setIsAnyFullscreen(false);
-    if (animeHistory.length > 0) {
-      const prevAnime = animeHistory[animeHistory.length - 1];
-      setAnimeHistory((prev) => prev.slice(0, -1));
-      dispatch(setSelectedAnime(prevAnime));
-    } else {
-      dispatch(setSelectedAnime(null));
-    }
-  }, [dispatch, animeHistory]);
+    setAnimeHistory([]);
+    dispatch(setSelectedAnime(null));
+    setCurrentTab('home');
+  }, [dispatch]);
 
   const handleOpenCategory = useCallback((category: CategoryPageType) => {
     setActiveCategory(category);
@@ -150,7 +216,7 @@ function AppContent() {
 
   // Top-level Android hardware back button handler
   useEffect(() => {
-    if (selectedAnime) return; // Handled by WatchPage
+    if (selectedAnime) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (activeCategory) {
         setActiveCategory(null);
@@ -160,7 +226,7 @@ function AppContent() {
         setCurrentTab('home');
         return true;
       }
-      return false; // Let OS exit/minimize app when on Home root
+      return false;
     });
     return () => sub.remove();
   }, [selectedAnime, activeCategory, currentTab]);
@@ -171,7 +237,7 @@ function AppContent() {
         <StatusBar style="light" />
 
         <View style={styles.screenContainer}>
-          {/* Main Tab Screens — Kept mounted to preserve scroll positions, images, and search state */}
+          {/* Main Tab Screens — Kept mounted to preserve scroll/state */}
           <View
             style={[
               styles.tabScene,
@@ -272,6 +338,9 @@ function AppContent() {
             favoritesCount={savedAnimeIds.length}
           />
         )}
+
+        {/* JS-side splash overlay — fades out once app is ready */}
+        <JsSplashOverlay visible={splashVisible} />
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -300,5 +369,18 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     height: '100%',
+  },
+  splashOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: SCREEN_W,
+    height: SCREEN_H,
+    zIndex: 9999,
+    backgroundColor: '#000000',
+  },
+  splashImage: {
+    width: SCREEN_W,
+    height: SCREEN_H,
   },
 });

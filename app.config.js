@@ -34,7 +34,7 @@ export default {
     icon: './assets/icon.png',
     splash: {
       image: './assets/splash.png',
-      resizeMode: 'contain',
+      resizeMode: 'cover',
       backgroundColor: '#000000',
     },
     plugins: [
@@ -69,6 +69,7 @@ export default {
       ],
       // Edge-to-edge: allows the app to draw behind the status bar and nav bar.
       // Required for proper fullscreen immersive mode on Android.
+      edgeToEdge: true,
       softwareKeyboardLayoutMode: 'resize',
       statusBar: {
         backgroundColor: '#00000000',

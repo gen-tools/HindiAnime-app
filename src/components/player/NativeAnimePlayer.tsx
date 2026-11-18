@@ -309,6 +309,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
       if (!isMounted) return;
       if (!isDraggingRef.current) {
         volumeRef.current = newVol;
+        // Only update React state from hardware buttons — not during gesture drags
         setVolume(newVol);
         if (player) {
           player.volume = newVol;
@@ -397,12 +398,12 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
         if (p.bufferedPosition > 0) setBuffered(p.bufferedPosition);
       }
       const dur = player.duration || 0;
-      if (dur > 0) {
+      if (dur > 0 && dur !== durationRef.current) {
         setDuration(dur);
         durationRef.current = dur;
       }
       if (p.currentTime > 0) setIsBuffering(false);
-      if (onTimeUpdate) onTimeUpdate(p.currentTime, dur);
+      if (onTimeUpdate) onTimeUpdate(p.currentTime, durationRef.current || dur);
     });
 
     const s4 = player.addListener('playToEnd', () => {
@@ -456,25 +457,8 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
   }, [player, onError, onTimeUpdate, onEnded, currentAudio, showControls, scheduleHide]);
 
   // Continuous playback position synchronization while playing
-  useEffect(() => {
-    if (!player || !isPlaying) return;
-    const interval = setInterval(() => {
-      if (!isScrubbingRef.current) {
-        const cur = player.currentTime;
-        const dur = player.duration;
-        if (typeof cur === 'number' && cur >= 0) {
-          setCurrentTime(cur);
-          currentTimeRef.current = cur;
-        }
-        if (typeof dur === 'number' && dur > 0) {
-          setDuration(dur);
-          durationRef.current = dur;
-        }
-        if (cur > 0) setIsBuffering(false);
-      }
-    }, 250);
-    return () => clearInterval(interval);
-  }, [player, isPlaying]);
+  // NOTE: timeUpdate listener above (every 250ms) handles this — no extra interval needed.
+  // Keeping this removed to avoid double renders every 250ms.
 
   // Show controls on mount
   useEffect(() => {
@@ -680,9 +664,9 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
           HardwareControl.setVolumeThrottled(clampedValue); // Throttled bridge call (~35ms)
         }
 
-        // Smooth on-screen HUD update on every frame (~16ms)
+        // Smooth on-screen HUD update — throttled to ~50ms (~20fps) to avoid excessive React renders
         const now = Date.now();
-        if (now - lastHudUpdateRef.current >= 16) {
+        if (now - lastHudUpdateRef.current >= 50) {
           lastHudUpdateRef.current = now;
           setFeedbackHud({ type: zone, value: clampedValue });
         }

@@ -15,8 +15,15 @@ export interface HomepageResponse {
 }
 
 export interface CatalogQueryArgs {
-  kind: 'series' | 'movies';
-  page?: number;
+  kind: 'series' | 'movies' | 'cartoons';
+  page: number;
+}
+
+export interface CatalogPageResponse {
+  items: Anime[];
+  currentPage: number;
+  totalPages: number;
+  hasMore: boolean;
 }
 
 export const animeApi = createApi({
@@ -259,19 +266,31 @@ export const animeApi = createApi({
       },
     }),
 
-    // ─── 5. Paginated Catalog (Browse series & movies) ──────────────────────
-    getCatalog: builder.query<Anime[], CatalogQueryArgs>({
-      query: ({ kind, page = 1 }) => `/data/catalog?kind=${kind}&page=${page}`,
+    // ─── 5. Paginated Catalog (Browse series, movies, cartoons) ─────────────
+    getCatalog: builder.query<CatalogPageResponse, CatalogQueryArgs>({
+      query: ({ kind, page }) => `/data/catalog?kind=${kind}&page=${page}`,
       keepUnusedDataFor: 900,
-      transformResponse: (response: any, _meta, { kind }) => {
-        const results = response?.results || [];
-        return results
+      // Each {kind, page} combination is a separate cache entry
+      serializeQueryArgs: ({ queryArgs }) => `${queryArgs.kind}-${queryArgs.page}`,
+      transformResponse: (response: any, _meta, { kind, page }) => {
+        const inner = response?.results || {};
+        const rawList: any[] = Array.isArray(inner.results) ? inner.results : (Array.isArray(inner) ? inner : []);
+        const totalPages: number = inner.totalPages ?? 1;
+        const currentPage: number = inner.currentPage ?? page;
+        const items = rawList
           .map((item: any) =>
             createAnimeFromRaw(item, {
               isMovie: kind === 'movies',
+              isCartoon: kind === 'cartoons',
             })
           )
           .filter((a: any): a is Anime => a !== null);
+        return {
+          items,
+          currentPage,
+          totalPages,
+          hasMore: currentPage < totalPages,
+        };
       },
     }),
   }),

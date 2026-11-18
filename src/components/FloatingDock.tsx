@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Home, Compass, Search, Bookmark, User } from 'lucide-react-native';
 
 export type NavTab = 'home' | 'browse' | 'search' | 'list' | 'profile';
@@ -15,8 +16,10 @@ export const FloatingDock: React.FC<FloatingDockProps> = React.memo(({
   onTabChange,
   favoritesCount = 0,
 }) => {
+  const insets = useSafeAreaInsets();
+  const bottomOffset = Math.max(insets.bottom + 8, Platform.OS === 'ios' ? 24 : 14);
   return (
-    <View pointerEvents="box-none" style={styles.wrapper}>
+    <View pointerEvents="box-none" style={[styles.wrapper, { bottom: bottomOffset }]}>
       <View style={styles.dockContainer}>
         {/* 1. Home */}
         <TouchableOpacity
@@ -145,7 +148,7 @@ FloatingDock.displayName = 'FloatingDock';
 const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 24 : 14,
+    bottom: 14, // Fallback; overridden dynamically from useSafeAreaInsets in render
     left: 0,
     right: 0,
     alignItems: 'center',
