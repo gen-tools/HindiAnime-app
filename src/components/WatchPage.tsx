@@ -38,6 +38,7 @@ interface WatchPageProps {
   allAnime: Anime[];
   onToggleSave?: (animeId: string) => void;
   isSaved?: boolean;
+  onFullscreenChange?: (isFullscreen: boolean) => void;
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -47,6 +48,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   onBack,
   onSelectAnime,
   allAnime,
+  onFullscreenChange,
 }) => {
   const dispatch = useAppDispatch();
   const streamCache = useAppSelector((s) => s.anime.streamCache);
@@ -65,6 +67,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   );
 
   const [isPlayerFullscreen, setIsPlayerFullscreen] = useState<boolean>(false);
+
+  const handleFullscreenChange = useCallback(
+    (fs: boolean) => {
+      setIsPlayerFullscreen(fs);
+      onFullscreenChange?.(fs);
+    },
+    [onFullscreenChange]
+  );
 
   // RTK Query: single fetch path for anime details; automatic deduplication & 30 min cache
   const { data: remoteDetails } = useGetAnimeDetailsQuery(detailedAnime.id, {
@@ -300,14 +310,14 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   useEffect(() => {
     const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (isPlayerFullscreen) {
-        setIsPlayerFullscreen(false);
+        handleFullscreenChange(false);
         return true;
       }
       onBack();
       return true;
     });
     return () => backSub.remove();
-  }, [onBack, isPlayerFullscreen]);
+  }, [onBack, isPlayerFullscreen, handleFullscreenChange]);
 
   const relatedAnime = useMemo(
     // Use only the stable id, not the full detailedAnime object, so this memo
@@ -335,7 +345,7 @@ export const WatchPage: React.FC<WatchPageProps> = ({
             isMovie={Boolean(detailedAnime.isMovie)}
             autoPlay={true}
             onTimeUpdate={handleTimeUpdate}
-            onFullscreenChange={setIsPlayerFullscreen}
+            onFullscreenChange={handleFullscreenChange}
             onBack={onBack}
           />
         ) : (

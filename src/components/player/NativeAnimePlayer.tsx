@@ -55,6 +55,7 @@ import {
   AudioTrack,
   VideoTrack,
 } from 'expo-video';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { NavigationBar } from 'expo-navigation-bar';
 import { HardwareControl } from '../../utils/hardwareControl';
@@ -196,16 +197,14 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
   });
   const lastHudUpdateRef = useRef(0);
 
+  // ── Continuous gesture tracking refs (persists smoothly across re-renders with zero stutter)
+  const dragZoneRef = useRef<'brightness' | 'volume' | 'none'>('none');
+  const startValueRef = useRef<number>(0);
+  const currentValueRef = useRef<number>(0);
+  const isDraggingRef = useRef<boolean>(false);
+
   const [feedbackHud, setFeedbackHud] = useState<{ type: 'volume' | 'brightness'; value: number } | null>(null);
   const hudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dragModeRef = useRef<'none' | 'seek' | 'volume' | 'brightness'>('none');
-  const dragStartTouch = useRef<{ x: number; y: number; time: number; volume: number; brightness: number }>({
-    x: 0,
-    y: 0,
-    time: 0,
-    volume: 1.0,
-    brightness: 1.0,
-  });
 
   // ── Interactive Scrubbing & Gestures ────────────────────────────────────
   const [scrubbingTime, setScrubbingTime] = useState<number | null>(null);
@@ -282,7 +281,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
   // Synchronize actual hardware device brightness and media volume
   useEffect(() => {
     let isMounted = true;
-    HardwareControl.getInitialBrightness().then((b) => {
+    HardwareControl.getBrightness().then((b) => {
       if (isMounted && typeof b === 'number' && b > 0) {
         if (originalBrightnessRef.current === null) {
           originalBrightnessRef.current = b;
@@ -292,7 +291,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
         brightnessAnim.setValue(b);
       }
     });
-    HardwareControl.getInitialVolume().then((v) => {
+    HardwareControl.getVolume().then((v) => {
       if (isMounted && typeof v === 'number') {
         if (originalVolumeRef.current === null) {
           originalVolumeRef.current = v;
@@ -304,8 +303,22 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
         }
       }
     });
+
+    // Sync physical hardware volume button presses directly
+    const unsubscribeVol = HardwareControl.addVolumeListener((newVol) => {
+      if (!isMounted) return;
+      if (!isDraggingRef.current) {
+        volumeRef.current = newVol;
+        setVolume(newVol);
+        if (player) {
+          player.volume = newVol;
+        }
+      }
+    });
+
     return () => {
       isMounted = false;
+      unsubscribeVol();
     };
   }, [player, brightnessAnim]);
 
@@ -378,7 +391,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
     });
 
     const s3 = player.addListener('timeUpdate', (p) => {
-      if (!isScrubbingRef.current && dragModeRef.current !== 'seek') {
+      if (!isScrubbingRef.current) {
         setCurrentTime(p.currentTime);
         currentTimeRef.current = p.currentTime;
         if (p.bufferedPosition > 0) setBuffered(p.bufferedPosition);
@@ -446,7 +459,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
   useEffect(() => {
     if (!player || !isPlaying) return;
     const interval = setInterval(() => {
-      if (!isScrubbingRef.current && dragModeRef.current !== 'seek') {
+      if (!isScrubbingRef.current) {
         const cur = player.currentTime;
         const dur = player.duration;
         if (typeof cur === 'number' && cur >= 0) {
@@ -611,171 +624,141 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
     };
   }, [isFullscreen, onFullscreenChange]);
 
-  // ─── Touch Gestures: Volume (Right drag), Brightness (Left drag), Seek (Horizontal drag), Tap ───
-  const screenPanResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 2 || Math.abs(g.dy) > 2,
-    onPanResponderTerminationRequest: () => false,
-    onShouldBlockNativeResponder: () => true,
-    onPanResponderGrant: (e) => {
-      const curLayout = playerLayoutRef.current;
-      const boxWidth = curLayout.width || windowWidth;
-      const touchX = e.nativeEvent.locationX ?? e.nativeEvent.pageX;
-      const touchY = e.nativeEvent.locationY ?? e.nativeEvent.pageY;
-      const p = playerRef.current;
+  // ─── Continuous Gestures via react-native-gesture-handler ──────────────────
+  // Left side vertical pan = Brightness
+  // Right side vertical pan = Volume
+  // Single tap = Toggle player controls
+  // Double tap = ±10s seek ripple
+  const panGesture = useMemo(() => {
+    return Gesture.Pan()
+      .runOnJS(true)
+      .activeOffsetY([-10, 10]) // Prevents accidental trigger on taps
+      .onStart((e) => {
+        const curLayout = playerLayoutRef.current;
+        const screenWidth = curLayout.width || windowWidth;
+        const startX = e.x;
+        const isLeft = startX < screenWidth / 2;
+        const zone = isLeft ? 'brightness' : 'volume';
+        dragZoneRef.current = zone;
+        isDraggingRef.current = true;
 
-      dragStartTouch.current = {
-        x: touchX,
-        y: touchY,
-        time: p?.currentTime || currentTimeRef.current || 0,
-        volume: volumeRef.current,
-        brightness: brightnessRef.current,
-      };
-      dragModeRef.current = 'none';
-    },
-    onPanResponderMove: (e, g) => {
-      const curLayout = playerLayoutRef.current;
-      const boxWidth = curLayout.width || windowWidth;
-      const absX = Math.abs(g.dx);
-      const absY = Math.abs(g.dy);
+        // Anchor on touch start directly from live values
+        const startVal = zone === 'brightness' ? brightnessRef.current : volumeRef.current;
+        startValueRef.current = startVal;
+        currentValueRef.current = startVal;
 
-      // Determine drag mode on subtle or fast finger movement
-      if (dragModeRef.current === 'none') {
-        // Vertical movement: 2px threshold for immediate gentle response
-        if (absY >= 2 && absY >= absX) {
-          const isRight = dragStartTouch.current.x >= boxWidth * 0.5;
-          dragModeRef.current = isRight ? 'volume' : 'brightness';
-        } else if (absX >= 8 && absX > absY) {
-          dragModeRef.current = 'seek';
+        if (hudTimerRef.current) {
+          clearTimeout(hudTimerRef.current);
+          hudTimerRef.current = null;
         }
-      }
+        setFeedbackHud({ type: zone, value: startVal });
+      })
+      .onUpdate((e) => {
+        if (!isDraggingRef.current) return;
+        const zone = dragZoneRef.current;
+        if (zone === 'none') return;
 
-      const p = playerRef.current;
+        const curLayout = playerLayoutRef.current;
+        const screenHeight = curLayout.height || windowHeight;
+        const dragFactor = screenHeight * 0.6; // screenHeight * 0.6 per instructions
 
-      // CONTINUOUS GENTLE / FAST TOUCH-AND-DRAG (Movement distance controls change, not swipe speed)
-      if (dragModeRef.current === 'brightness') {
-        const travelRange = isFullscreen ? 200 : 120;
-        const delta = -g.dy / travelRange;
-        const nextBri = Math.max(0.01, Math.min(1.0, dragStartTouch.current.brightness + delta));
-        brightnessRef.current = nextBri;
-        brightnessAnim.setValue(nextBri);
-        HardwareControl.setBrightness(nextBri);
+        // newValue = clamp(startValue - (event.translationY / (screenHeight * 0.6)), 0, 1)
+        const rawValue = startValueRef.current - (e.translationY / dragFactor);
+        const clampedValue = Math.max(0, Math.min(1, rawValue));
+        currentValueRef.current = clampedValue;
 
-        const now = Date.now();
-        if (now - lastHudUpdateRef.current > 16) {
-          lastHudUpdateRef.current = now;
-          setFeedbackHud({ type: 'brightness', value: nextBri });
-        }
-      } else if (dragModeRef.current === 'volume') {
-        const travelRange = isFullscreen ? 200 : 120;
-        const delta = -g.dy / travelRange;
-        const nextVol = Math.max(0, Math.min(1.0, dragStartTouch.current.volume + delta));
-        volumeRef.current = nextVol;
-        if (p) {
-          p.volume = nextVol;
-          p.muted = nextVol === 0;
-        }
-        HardwareControl.setDeviceVolume(nextVol);
-
-        const now = Date.now();
-        if (now - lastHudUpdateRef.current > 16) {
-          lastHudUpdateRef.current = now;
-          setFeedbackHud({ type: 'volume', value: nextVol });
-        }
-      } else if (dragModeRef.current === 'seek') {
-        const dur = p?.duration || durationRef.current || 0;
-        if (dur <= 0) return;
-        const maxSec = Math.min(90, Math.max(30, dur * 0.25));
-        const deltaSec = Math.round((g.dx / (boxWidth * 0.6)) * maxSec);
-        const target = Math.max(0, Math.min(dur, dragStartTouch.current.time + deltaSec));
-
-        const now = Date.now();
-        if (now - lastHudUpdateRef.current > 16) {
-          lastHudUpdateRef.current = now;
-          setSlideSeek({ deltaSec, targetTime: target });
-        }
-      }
-    },
-    onPanResponderRelease: (e, g) => {
-      const p = playerRef.current;
-      const curLayout = playerLayoutRef.current;
-      const boxWidth = curLayout.width || windowWidth;
-      const touchX = e.nativeEvent.locationX ?? e.nativeEvent.pageX;
-      const now = Date.now();
-
-      if (dragModeRef.current === 'seek') {
-        setSlideSeek((prev) => {
-          if (prev && p) {
-            p.currentTime = prev.targetTime;
-            setCurrentTime(prev.targetTime);
-            currentTimeRef.current = prev.targetTime;
-          }
-          return null;
-        });
-        showControls();
-        scheduleHide();
-      } else if (dragModeRef.current === 'volume') {
-        setVolume(volumeRef.current);
-        HardwareControl.setDeviceVolume(volumeRef.current);
-        setFeedbackHud({ type: 'volume', value: volumeRef.current });
-        if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
-        hudTimerRef.current = setTimeout(() => {
-          setFeedbackHud(null);
-        }, 850);
-      } else if (dragModeRef.current === 'brightness') {
-        setBrightness(brightnessRef.current);
-        HardwareControl.setBrightness(brightnessRef.current);
-        brightnessAnim.setValue(brightnessRef.current);
-        setFeedbackHud({ type: 'brightness', value: brightnessRef.current });
-        if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
-        hudTimerRef.current = setTimeout(() => {
-          setFeedbackHud(null);
-        }, 850);
-      } else {
-        // Genuine Tap (user pressed and released without dragging)
-        const timeDiff = now - lastTapRef.current.time;
-        const distDiff = Math.abs(touchX - lastTapRef.current.x);
-
-        if (timeDiff < 280 && distDiff < 60) {
-          // Double tap detected
-          if (singleTapTimerRef.current) {
-            clearTimeout(singleTapTimerRef.current);
-            singleTapTimerRef.current = null;
-          }
-
-          if (touchX < boxWidth * 0.4) {
-            seekDelta(-10);
-            setDoubleTapSide('left');
-          } else if (touchX > boxWidth * 0.6) {
-            seekDelta(10);
-            setDoubleTapSide('right');
-          } else {
-            togglePlay();
-          }
-
-          if (doubleTapTimerRef.current) clearTimeout(doubleTapTimerRef.current);
-          doubleTapTimerRef.current = setTimeout(() => {
-            setDoubleTapSide(null);
-          }, 700);
-
-          lastTapRef.current = { time: 0, x: 0 };
+        if (zone === 'brightness') {
+          brightnessRef.current = clampedValue;
+          brightnessAnim.setValue(clampedValue); // Smooth 60fps dimming layer
+          HardwareControl.setBrightnessThrottled(clampedValue); // Throttled bridge call (~35ms)
         } else {
-          // Single tap: schedule controls toggle
-          lastTapRef.current = { time: now, x: touchX };
-          if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
-          singleTapTimerRef.current = setTimeout(() => {
-            toggleControls();
-          }, 240);
+          volumeRef.current = clampedValue;
+          if (playerRef.current) {
+            playerRef.current.volume = clampedValue;
+            playerRef.current.muted = clampedValue === 0;
+          }
+          HardwareControl.setVolumeThrottled(clampedValue); // Throttled bridge call (~35ms)
         }
-      }
-      dragModeRef.current = 'none';
-    },
-    onPanResponderTerminate: () => {
-      setSlideSeek(null);
-      setFeedbackHud(null);
-      dragModeRef.current = 'none';
-    },
-  }), [seekDelta, togglePlay, toggleControls, showControls, scheduleHide, isFullscreen, brightnessAnim, windowWidth]);
+
+        // Smooth on-screen HUD update on every frame (~16ms)
+        const now = Date.now();
+        if (now - lastHudUpdateRef.current >= 16) {
+          lastHudUpdateRef.current = now;
+          setFeedbackHud({ type: zone, value: clampedValue });
+        }
+      })
+      .onEnd(() => {
+        if (isDraggingRef.current) {
+          isDraggingRef.current = false;
+          const zone = dragZoneRef.current;
+          dragZoneRef.current = 'none';
+
+          HardwareControl.flushSync();
+
+          if (zone !== 'none') {
+            const finalVal = currentValueRef.current;
+            setFeedbackHud({ type: zone, value: finalVal });
+            if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+            hudTimerRef.current = setTimeout(() => {
+              setFeedbackHud(null);
+            }, 850);
+          }
+        }
+      })
+      .onFinalize(() => {
+        if (isDraggingRef.current) {
+          isDraggingRef.current = false;
+          dragZoneRef.current = 'none';
+          HardwareControl.flushSync();
+          if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+          hudTimerRef.current = setTimeout(() => {
+            setFeedbackHud(null);
+          }, 850);
+        }
+      });
+  }, [windowWidth, windowHeight, brightnessAnim]);
+
+  const doubleTapGesture = useMemo(() => {
+    return Gesture.Tap()
+      .runOnJS(true)
+      .numberOfTaps(2)
+      .maxDuration(280)
+      .onEnd((e) => {
+        const curLayout = playerLayoutRef.current;
+        const boxWidth = curLayout.width || windowWidth;
+        const touchX = e.x;
+
+        if (touchX < boxWidth * 0.4) {
+          seekDelta(-10);
+          setDoubleTapSide('left');
+        } else if (touchX > boxWidth * 0.6) {
+          seekDelta(10);
+          setDoubleTapSide('right');
+        } else {
+          togglePlay();
+        }
+
+        if (doubleTapTimerRef.current) clearTimeout(doubleTapTimerRef.current);
+        doubleTapTimerRef.current = setTimeout(() => {
+          setDoubleTapSide(null);
+        }, 700);
+      });
+  }, [seekDelta, togglePlay, windowWidth]);
+
+  const singleTapGesture = useMemo(() => {
+    return Gesture.Tap()
+      .runOnJS(true)
+      .numberOfTaps(1)
+      .maxDuration(250)
+      .onEnd(() => {
+        toggleControls();
+      });
+  }, [toggleControls]);
+
+  const composedGesture = useMemo(() => {
+    const taps = Gesture.Exclusive(doubleTapGesture, singleTapGesture);
+    return Gesture.Race(panGesture, taps);
+  }, [panGesture, doubleTapGesture, singleTapGesture]);
 
   // ── Dedicated Progress Bar Scrubber ─────────────────────────────────────
   const seekScrubberTo = useCallback((touchLocationX: number, commit = false) => {
@@ -874,8 +857,10 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
           pointerEvents="none"
         />
 
-        {/* Full surface gesture responder for tap, double-tap, slide-seek, volume, and brightness */}
-        <View style={StyleSheet.absoluteFill} {...screenPanResponder.panHandlers} />
+        {/* Full surface continuous gesture detector for volume, brightness, and taps */}
+        <GestureDetector gesture={composedGesture}>
+          <View style={StyleSheet.absoluteFill} collapsable={false} />
+        </GestureDetector>
 
         {/* Volume & Brightness Gesture HUD Indicator */}
         {feedbackHud && (
@@ -1048,7 +1033,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
               style={styles.centerSkipBtn}
             >
               <View style={styles.centerSkipInner}>
-                <RotateCcw size={28} color="#ffffff" />
+                <RotateCcw size={32} color="#ffffff" />
                 <View style={styles.centerSkipTextWrapper} pointerEvents="none">
                   <Text style={styles.centerSkipText}>10</Text>
                 </View>
@@ -1066,9 +1051,9 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
               style={styles.centerPlayBtn}
             >
               {isPlaying ? (
-                <Pause size={28} color="#ffffff" fill="#ffffff" />
+                <Pause size={36} color="#ffffff" fill="#ffffff" />
               ) : (
-                <Play size={28} color="#ffffff" fill="#ffffff" style={{ marginLeft: 3 }} />
+                <Play size={36} color="#ffffff" fill="#ffffff" style={{ marginLeft: 3 }} />
               )}
             </TouchableOpacity>
 
@@ -1083,7 +1068,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
               style={styles.centerSkipBtn}
             >
               <View style={styles.centerSkipInner}>
-                <RotateCw size={28} color="#ffffff" />
+                <RotateCw size={32} color="#ffffff" />
                 <View style={styles.centerSkipTextWrapper} pointerEvents="none">
                   <Text style={styles.centerSkipText}>10</Text>
                 </View>
@@ -1198,7 +1183,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
           <View style={[styles.bottom, {
             paddingBottom: isFullscreen
               ? Math.max(8, insets.bottom)
-              : Math.max(8, insets.bottom),
+              : 4,
           }]}>
             {/* Rock-solid progress bar hit box (child elements have pointerEvents="none") */}
             <View
@@ -1595,16 +1580,13 @@ const styles = StyleSheet.create({
   centerSkipBtn: {
     width: 52,
     height: 52,
-    borderRadius: 26,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'transparent',
   },
   centerSkipInner: {
-    width: 32,
-    height: 32,
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1618,27 +1600,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   centerSkipText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '900',
     color: '#ffffff',
     textAlign: 'center',
     includeFontPadding: false,
-    lineHeight: 11,
+    lineHeight: 12,
     marginTop: 0.5,
   },
   centerPlayBtn: {
     width: 62,
     height: 62,
-    borderRadius: 31,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.35)',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 6,
+    backgroundColor: 'transparent',
   },
 
   // Bottom section & Scrubber

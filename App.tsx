@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, StyleSheet, BackHandler, Image, Animated } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, StyleSheet, BackHandler } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Provider } from 'react-redux';
 import { store, useAppDispatch, useAppSelector } from './src/store';
@@ -34,24 +36,13 @@ function AppContent() {
   const [activeCategory, setActiveCategory] = useState<CategoryPageType | null>(null);
   const [searchInitialQuery, setSearchInitialQuery] = useState<string>('');
   const [animeHistory, setAnimeHistory] = useState<Anime[]>([]);
+  const [isAnyFullscreen, setIsAnyFullscreen] = useState(false);
 
-  // Launch Screen State
-  const [showLaunchScreen, setShowLaunchScreen] = useState(true);
-  const launchOpacity = useRef(new Animated.Value(1)).current;
-
+  // Lock initial orientation to Portrait so Android manifest allows dynamic landscape
+  // changes while starting in portrait
   useEffect(() => {
-    // Elegant launch screen presentation that fades out smoothly once ready
-    const timer = setTimeout(() => {
-      Animated.timing(launchOpacity, {
-        toValue: 0,
-        duration: 400,
-        useNativeDriver: true,
-      }).start(() => {
-        setShowLaunchScreen(false);
-      });
-    }, 1200);
-    return () => clearTimeout(timer);
-  }, [launchOpacity]);
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => null);
+  }, []);
 
   // Single network-fetch path for homepage data via RTK Query (cached & deduplicated)
   const { data: homepageData } = useGetHomepageQuery();
@@ -117,6 +108,7 @@ function AppContent() {
   );
 
   const handleBackFromWatch = useCallback(() => {
+    setIsAnyFullscreen(false);
     if (animeHistory.length > 0) {
       const prevAnime = animeHistory[animeHistory.length - 1];
       setAnimeHistory((prev) => prev.slice(0, -1));
@@ -132,6 +124,7 @@ function AppContent() {
 
   const handleTabChange = useCallback(
     (tab: NavTab) => {
+      setIsAnyFullscreen(false);
       setAnimeHistory([]);
       dispatch(setSelectedAnime(null));
       setActiveCategory(null);
@@ -145,6 +138,7 @@ function AppContent() {
 
   const handleSearchNavigate = useCallback(
     (query: string) => {
+      setIsAnyFullscreen(false);
       setAnimeHistory([]);
       dispatch(setSelectedAnime(null));
       setActiveCategory(null);
@@ -173,7 +167,7 @@ function AppContent() {
 
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <SafeAreaView style={styles.safeArea} edges={isAnyFullscreen ? [] : ['top']}>
         <StatusBar style="light" />
 
         <View style={styles.screenContainer}>
@@ -265,6 +259,7 @@ function AppContent() {
               allAnime={animeList}
               onToggleSave={handleToggleSave}
               isSaved={savedAnimeIds.includes(selectedAnime.id)}
+              onFullscreenChange={setIsAnyFullscreen}
             />
           )}
         </View>
@@ -278,32 +273,17 @@ function AppContent() {
           />
         )}
       </SafeAreaView>
-
-      {/* Edge-to-Edge Launch / Splash Screen Overlay */}
-      {showLaunchScreen && (
-        <Animated.View
-          style={[
-            styles.launchOverlay,
-            { opacity: launchOpacity },
-          ]}
-          pointerEvents="none"
-        >
-          <Image
-            source={require('./assets/splash.png')}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-          />
-        </Animated.View>
-      )}
     </SafeAreaProvider>
   );
 }
 
 export default function App() {
   return (
-    <Provider store={store}>
-      <AppContent />
-    </Provider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <Provider store={store}>
+        <AppContent />
+      </Provider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -320,10 +300,5 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     height: '100%',
-  },
-  launchOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: '#000000',
-    zIndex: 9999999,
   },
 });

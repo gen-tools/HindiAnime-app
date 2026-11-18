@@ -28,9 +28,9 @@ export default {
     name: 'HindiAnime',
     slug: 'hindianime',
     version: '1.0.0',
-    orientation: 'portrait',
+    orientation: 'default',
     userInterfaceStyle: 'dark',
-    backgroundColor: '#050807',
+    backgroundColor: '#000000',
     icon: './assets/icon.png',
     splash: {
       image: './assets/splash.png',
