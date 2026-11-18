@@ -34,10 +34,23 @@ export default {
     icon: './assets/icon.png',
     splash: {
       image: './assets/splash.png',
-      resizeMode: 'cover',
+      resizeMode: 'contain',
       backgroundColor: '#000000',
     },
     plugins: [
+      [
+        'expo-splash-screen',
+        {
+          backgroundColor: '#000000',
+          image: './assets/splash.png',
+          dark: {
+            backgroundColor: '#000000',
+            image: './assets/splash.png',
+          },
+          imageWidth: 200,
+          resizeMode: 'contain',
+        },
+      ],
       [
         'expo-video',
         {
@@ -58,6 +71,15 @@ export default {
     android: {
       package: 'com.hindianime.app',
       versionCode: 1,
+      splash: {
+        image: './assets/splash.png',
+        resizeMode: 'contain',
+        backgroundColor: '#000000',
+        dark: {
+          image: './assets/splash.png',
+          backgroundColor: '#000000',
+        },
+      },
       adaptiveIcon: {
         foregroundImage: './assets/adaptive-icon.png',
         backgroundColor: '#000000',

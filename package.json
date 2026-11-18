@@ -4,8 +4,8 @@
   "main": "index.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "prebuild": "expo prebuild --platform android",
     "build:apk": "eas build -p android --profile production-apk"
@@ -17,7 +17,7 @@
     "expo-brightness": "~58.0.3",
     "expo-navigation-bar": "~58.0.4",
     "expo-screen-orientation": "~58.0.4",
-    "expo-splash-screen": "^0.29.24",
+    "expo-splash-screen": "~58.0.14",
     "expo-status-bar": "~58.0.4",
     "expo-video": "~58.0.13",
     "lucide-react-native": "^0.475.0",

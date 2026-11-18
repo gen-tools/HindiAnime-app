@@ -36,11 +36,13 @@ import { LocalStorageService } from './src/services/storage';
 
 // ─── Prevent native splash from auto-hiding BEFORE any React renders ──────────
 // Must be called at module level (not inside component) for it to work reliably.
-SplashScreen.preventAutoHideAsync().catch(() => {
-  // preventAutoHideAsync may throw in Expo Go or when already hidden — ignore.
-});
-// Smooth fade-out when we hide
-SplashScreen.setOptions({ fade: true, duration: 350 });
+try {
+  SplashScreen.preventAutoHideAsync().catch(() => {
+    // preventAutoHideAsync may throw in Expo Go or when already hidden — ignore.
+  });
+  // Smooth fade-out when we hide
+  SplashScreen.setOptions({ fade: true, duration: 350 });
+} catch {}
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -110,37 +112,55 @@ function AppContent() {
   // ── Storage hydration + splash control ───────────────────────────────────
   // Strategy:
   //   1. Hydrate from AsyncStorage (fast — usually <100ms)
-  //   2. Hide native splash after storage read completes
-  //   3. Fade out JS overlay after a short settle delay so React has painted
+  //   2. Hide native splash after storage read completes (or 1000ms failsafe)
+  //   3. Fade out JS overlay after React paints
   useEffect(() => {
     let cancelled = false;
-    LocalStorageService.init().then(() => {
-      if (cancelled) return;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
-      const storedWatchlist = LocalStorageService.getWatchlist();
-      const storedFavorites = LocalStorageService.getFavorites();
-      const snapshot = LocalStorageService.getHomepageSnapshot();
-
-      dispatch(
-        hydrateStorage({
-          savedAnimeIds: storedWatchlist || [],
-          favoriteAnimeIds: storedFavorites || [],
-          cachedList: snapshot?.animeList,
-          cachedLatest: snapshot?.latestEpisodes,
-        })
-      );
-
-      // Hide the native splash screen
-      SplashScreen.hideAsync().catch(() => null);
-
-      // Give React one frame to paint before fading out the JS overlay
+    const finishSplash = () => {
+      try {
+        SplashScreen.hideAsync().catch(() => null);
+      } catch {}
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (!cancelled) setSplashVisible(false);
         });
       });
-    });
-    return () => { cancelled = true; };
+    };
+
+    // Failsafe: if storage hydration hangs, dismiss splash after 1000ms
+    fallbackTimer = setTimeout(finishSplash, 1000);
+
+    LocalStorageService.init()
+      .then(() => {
+        if (cancelled) return;
+
+        const storedWatchlist = LocalStorageService.getWatchlist();
+        const storedFavorites = LocalStorageService.getFavorites();
+        const snapshot = LocalStorageService.getHomepageSnapshot();
+
+        dispatch(
+          hydrateStorage({
+            savedAnimeIds: storedWatchlist || [],
+            favoriteAnimeIds: storedFavorites || [],
+            cachedList: snapshot?.animeList,
+            cachedLatest: snapshot?.latestEpisodes,
+          })
+        );
+      })
+      .catch((err) => {
+        console.warn('Storage hydration error:', err);
+      })
+      .finally(() => {
+        if (fallbackTimer) clearTimeout(fallbackTimer);
+        finishSplash();
+      });
+
+    return () => {
+      cancelled = true;
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+    };
   }, [dispatch]);
 
   // ── Synchronize live network data into Redux + storage ────────────────────
