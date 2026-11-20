@@ -188,7 +188,7 @@ const HomeView_: React.FC<HomeViewProps> = ({
     }));
   }, [latestEpisodesList, animeList]);
 
-  // A to Z filtered titles (capped to 24 for ultra-smooth scrolling on low-end devices)
+  // A to Z filtered titles (sorted alphabetically, capped to 24 for ultra-smooth scrolling)
   const azFilteredAnime = useMemo(() => {
     let filtered = animeList;
     if (selectedAZLetter === '#') {
@@ -198,7 +198,7 @@ const HomeView_: React.FC<HomeViewProps> = ({
         a.title.toUpperCase().startsWith(selectedAZLetter)
       );
     }
-    return filtered.slice(0, 24);
+    return [...filtered].sort((a, b) => a.title.localeCompare(b.title)).slice(0, 24);
   }, [animeList, selectedAZLetter]);
 
   const handleCategoryClick = (catId: string) => {
@@ -225,12 +225,23 @@ const HomeView_: React.FC<HomeViewProps> = ({
   };
 
   const handleSelectLatestEpisode = (item: LatestEpisodeItem) => {
+    const epNum = item.episodeNumber || 1;
+    const sNum = item.seasonNumber || 1;
+
     if (item.anime) {
-      onSelectAnime(item.anime);
+      onSelectAnime({
+        ...item.anime,
+        initialEpisodeNumber: epNum,
+        initialSeasonNumber: sNum,
+      });
     } else {
       const match = animeList.find((a) => a.id === item.animeId || a.id === item.animeSlug);
       if (match) {
-        onSelectAnime(match);
+        onSelectAnime({
+          ...match,
+          initialEpisodeNumber: epNum,
+          initialSeasonNumber: sNum,
+        });
       } else {
         onSelectAnime({
           id: item.animeSlug || item.animeId,
@@ -241,6 +252,8 @@ const HomeView_: React.FC<HomeViewProps> = ({
           duration: '24m',
           genres: ['Action', 'Fantasy'],
           type: 'Series',
+          initialEpisodeNumber: epNum,
+          initialSeasonNumber: sNum,
         } as any);
       }
     }

@@ -47,7 +47,6 @@ export default {
             backgroundColor: '#000000',
             image: './assets/splash.png',
           },
-          imageWidth: 200,
           resizeMode: 'contain',
         },
       ],

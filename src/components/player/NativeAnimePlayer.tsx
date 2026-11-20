@@ -225,6 +225,7 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
   const [currentAudio, setCurrentAudio] = useState<AudioTrack | null>(null);
   const [videoTracks, setVideoTracks] = useState<VideoTrack[]>([]);
   const [currentVideo, setCurrentVideo] = useState<VideoTrack | null>(null);
+  const [selectedQualityId, setSelectedQualityId] = useState<string>('auto');
 
   // ── UI state ────────────────────────────────────────────────────────────
   const [activeMenu, setActiveMenu] = useState<'none' | 'audio' | 'quality' | 'speed' | 'screensize'>('none');
@@ -263,6 +264,13 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
   const player = useVideoPlayer(videoSource, (p) => {
     p.loop = false;
     p.timeUpdateEventInterval = 0.25; // 250ms interval for smooth continuous progress updates
+    try {
+      p.bufferOptions = {
+        preferredForwardBufferDuration: 45, // Buffer ahead 45 seconds of video
+        minBufferForPlayback: 2,           // Only 2s required to resume when network is slow
+        prioritizeTimeOverSizeThreshold: true,
+      };
+    } catch {}
     if (initialTime > 0) p.currentTime = initialTime;
     if (autoPlay) p.play();
   });
@@ -270,11 +278,16 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
   const playerRef = useRef(player);
   playerRef.current = player;
 
-  // Ensure timeUpdate interval is configured on player instance
+  // Ensure timeUpdate interval and buffering options are configured on player instance
   useEffect(() => {
     if (!player) return;
     try {
       player.timeUpdateEventInterval = 0.25;
+      player.bufferOptions = {
+        preferredForwardBufferDuration: 45,
+        minBufferForPlayback: 2,
+        prioritizeTimeOverSizeThreshold: true,
+      };
     } catch { /* ignore */ }
   }, [player]);
 
@@ -799,9 +812,30 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
     ? (currentAudio.label || currentAudio.language || 'Default')
     : 'Audio';
 
-  const qualityLabel = currentVideo
-    ? (currentVideo.size?.height > 0 ? `${currentVideo.size.height}p` : 'Auto')
-    : 'Auto';
+  const changeQuality = useCallback((trackId: string, track: VideoTrack | null) => {
+    if (!player) return;
+    try {
+      if (trackId === 'auto' || !track || !track.size || (track.size.height ?? 0) <= 0) {
+        player.maxResolution = null;
+        setSelectedQualityId('auto');
+      } else {
+        player.maxResolution = {
+          width: track.size.width || Math.round(((track.size.height ?? 720) * 16) / 9),
+          height: track.size.height,
+        };
+        setSelectedQualityId(trackId);
+      }
+    } catch { /* ignore */ }
+    setActiveMenu('none');
+    showControls();
+    scheduleHide();
+  }, [player, showControls, scheduleHide]);
+
+  const qualityLabel = selectedQualityId === 'auto'
+    ? 'Auto'
+    : currentVideo && (currentVideo.size?.height ?? 0) > 0
+    ? `${currentVideo.size?.height}p`
+    : 'Quality';
 
   // ── Render ──────────────────────────────────────────────────────────────
   return (
@@ -945,11 +979,11 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
         {playerError && (
           <View style={styles.overlay}>
             <View style={styles.errBox}>
-              <Text style={styles.errTitle}>Playback Unavailable</Text>
+              <Text style={styles.errTitle}>Check your internet connection</Text>
               <Text style={styles.errMsg} numberOfLines={3}>
-                {playerError.includes('520') || playerError.includes('502') || playerError.includes('Source error')
-                  ? 'Streaming server is temporarily busy or reconnecting. Tap Retry to reload.'
-                  : playerError}
+                {playerError.includes('520') || playerError.includes('502') || playerError.includes('Source error') || playerError.includes('network') || playerError.includes('connection') || playerError.includes('offline')
+                  ? 'Please check your internet connection and tap Retry.'
+                  : 'Check your internet connection and tap Retry to reconnect.'}
               </Text>
               <View style={styles.errBtnRow}>
                 <TouchableOpacity
@@ -1084,24 +1118,39 @@ export const NativeAnimePlayer: React.FC<NativeAnimePlayerProps> = ({
             </View>
           )}
 
-          {activeMenu === 'quality' && videoTracks.length > 0 && (
+          {activeMenu === 'quality' && (
             <View style={styles.popup}>
               <Text style={styles.popupTitle}>Quality</Text>
               <ScrollView style={styles.popupScroll} nestedScrollEnabled={true}>
-                {videoTracks.map((t, i) => {
-                  const active = currentVideo?.id === t.id;
-                  const label = (t.size?.height ?? 0) > 0 ? `${t.size?.height}p` : `Track ${i + 1}`;
-                  return (
-                    <TouchableOpacity
-                      key={t.id}
-                      onPress={() => setActiveMenu('none')}
-                      style={[styles.popupItem, active && styles.popupItemActive]}
-                    >
-                      <Text style={[styles.popupItemText, active && styles.popupItemTextActive]}>{label}</Text>
-                      {active && <Check size={14} color={GREEN} />}
-                    </TouchableOpacity>
-                  );
-                })}
+                {/* Auto (Adaptive based on internet connection) */}
+                <TouchableOpacity
+                  onPress={() => changeQuality('auto', null)}
+                  style={[styles.popupItem, selectedQualityId === 'auto' && styles.popupItemActive]}
+                >
+                  <Text style={[styles.popupItemText, selectedQualityId === 'auto' && styles.popupItemTextActive]}>
+                    Auto (Adaptive)
+                  </Text>
+                  {selectedQualityId === 'auto' && <Check size={14} color={GREEN} />}
+                </TouchableOpacity>
+
+                {/* Available resolution tracks */}
+                {videoTracks
+                  .filter((t) => (t.size?.height ?? 0) > 0)
+                  .sort((a, b) => (b.size?.height || 0) - (a.size?.height || 0))
+                  .map((t) => {
+                    const active = selectedQualityId === t.id;
+                    const label = `${t.size?.height}p`;
+                    return (
+                      <TouchableOpacity
+                        key={t.id}
+                        onPress={() => changeQuality(t.id, t)}
+                        style={[styles.popupItem, active && styles.popupItemActive]}
+                      >
+                        <Text style={[styles.popupItemText, active && styles.popupItemTextActive]}>{label}</Text>
+                        {active && <Check size={14} color={GREEN} />}
+                      </TouchableOpacity>
+                    );
+                  })}
               </ScrollView>
             </View>
           )}

@@ -152,6 +152,39 @@ export function createAnimeFromRaw(
   const rawRating = 8.8 + ((slug.length % 10) * 0.1);
   const rating = Number(rawRating.toFixed(1));
 
+  // Extract or infer authentic distinctive genres
+  const inferredGenres: string[] = [];
+  if (Array.isArray(raw.genres) && raw.genres.length > 0) {
+    inferredGenres.push(...raw.genres.map((g: string) => String(g).trim()));
+  } else if (typeof raw.genre === 'string' && raw.genre.trim()) {
+    inferredGenres.push(...raw.genre.split(',').map((g: string) => g.trim()));
+  } else {
+    const textToMatch = `${title} ${slug}`.toLowerCase();
+    if (/demon|slayer|sorcerer|curse|jujutsu|bleach|exorcist|death|chainsaw|tokyo ghoul/i.test(textToMatch)) {
+      inferredGenres.push('Dark Fantasy', 'Supernatural', 'Action');
+    } else if (/hunter|leveling|naruto|piece|dragon|clover|hero|boku|shippuden|kaiju/i.test(textToMatch)) {
+      inferredGenres.push('Action', 'Adventure', 'Shonen');
+    } else if (/isekai|reincarnat|slime|konosuba|overlord|shield|mushoku|sword art/i.test(textToMatch)) {
+      inferredGenres.push('Isekai', 'Fantasy', 'Adventure');
+    } else if (/mecha|gundam|geass|evangelion|robot/i.test(textToMatch)) {
+      inferredGenres.push('Mecha', 'Sci-Fi', 'Action');
+    } else if (/cyber|psycho|steamer|dr[ -]?stone|steins/i.test(textToMatch)) {
+      inferredGenres.push('Sci-Fi', 'Mystery');
+    } else if (/romance|love|wedding|kaguya|horimiya|dress|maid|girlfriend/i.test(textToMatch)) {
+      inferredGenres.push('Romance', 'Comedy', 'Slice of Life');
+    } else if (/spy|detective|conan|death note|monster/i.test(textToMatch)) {
+      inferredGenres.push('Mystery', 'Thriller', 'Supernatural');
+    } else if (/sport|lock|blue[ -]?lock|haikyu|kuroko|slam|ippo/i.test(textToMatch)) {
+      inferredGenres.push('Sports', 'Shonen');
+    } else if (isCartoon) {
+      inferredGenres.push('Comedy', 'Kids', 'Adventure');
+    } else {
+      inferredGenres.push('Action', 'Fantasy');
+    }
+  }
+
+  const genres = Array.from(new Set([...inferredGenres, 'Hindi Dubbed', isMovie ? 'Movie' : 'Series']));
+
   return {
     id: slug,
     title,
@@ -165,7 +198,7 @@ export function createAnimeFromRaw(
     votesCount: `${(slug.length * 3 + 15)}K votes`,
     likesCount: 1200 + slug.length * 45,
     duration: isMovie ? '1h 52m' : '24m',
-    genres: ['Action', 'Fantasy', 'Hindi Dubbed', isMovie ? 'Movie' : 'Series'],
+    genres,
     type: isMovie ? 'Movie' : (isCartoon ? 'Cartoon' : 'Series'),
     ageRating: 'U/A 13+',
     qualityBadge: 'HD 1080p',

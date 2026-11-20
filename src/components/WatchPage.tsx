@@ -28,7 +28,7 @@ import { getImageSource } from '../utils/imageHelper';
 import { getRecommendedAnime } from '../utils/recommendationHelper';
 import { LocalStorageService } from '../services/storage';
 import { useAppDispatch, useAppSelector } from '../store';
-import { resolveStream } from '../store/animeSlice';
+import { resolveStream, updateWatchHistory } from '../store/animeSlice';
 import { useGetAnimeDetailsQuery, useGetSeasonEpisodesQuery } from '../store/api/animeApi';
 
 interface WatchPageProps {
@@ -56,7 +56,6 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   const isResolvingStream = useAppSelector((s) => s.anime.streamLoading);
   const streamError = useAppSelector((s) => s.anime.streamError);
 
-  const [selectedSeasonIndex, setSelectedSeasonIndex] = useState<number>(0);
   const [detailedAnime, setDetailedAnime] = useState<Anime>(anime);
 
   const isMovie = Boolean(
@@ -65,6 +64,17 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     anime.isMovie ||
     anime.type === 'Movie'
   );
+
+  const initSNum = anime.initialSeasonNumber || 1;
+  const initEpNum = anime.initialEpisodeNumber || 1;
+
+  const [selectedSeasonIndex, setSelectedSeasonIndex] = useState<number>(() => {
+    if (anime.initialSeasonNumber && anime.seasons && anime.seasons.length > 0) {
+      const idx = anime.seasons.findIndex((s) => s.seasonNumber === anime.initialSeasonNumber);
+      return idx >= 0 ? idx : 0;
+    }
+    return 0;
+  });
 
   const [isPlayerFullscreen, setIsPlayerFullscreen] = useState<boolean>(false);
 
@@ -80,19 +90,37 @@ export const WatchPage: React.FC<WatchPageProps> = ({
   const { data: remoteDetails } = useGetAnimeDetailsQuery(detailedAnime.id, {
     skip: isMovie,
   });
-  const [selectedEpisode, setSelectedEpisode] = useState<Episode>(
-    anime.seasons?.[0]?.episodes?.[0] || {
-      id: `ep-${anime.id}-1-1`,
-      episodeNumber: 1,
-      title: 'Episode 1: The Beginning',
-      duration: anime.isMovie ? '1h 50m' : '24:15',
-      thumbnail: anime.poster,
-      hindiDubbed: true,
-      releaseDate: anime.releaseDate || '2024',
-      synopsis: `Episode 1 of ${anime.title} in Hindi audio.`,
-      downloadLinks: [],
+  const [selectedEpisode, setSelectedEpisode] = useState<Episode>(() => {
+    if (anime.initialEpisodeNumber) {
+      const targetSeason = anime.seasons?.find((s) => s.seasonNumber === initSNum) || anime.seasons?.[0];
+      const match = targetSeason?.episodes?.find((e) => e.episodeNumber === initEpNum);
+      if (match) return match;
+      return {
+        id: `ep-${anime.id}-${initSNum}-${initEpNum}`,
+        episodeNumber: initEpNum,
+        title: `Episode ${initEpNum}`,
+        duration: anime.isMovie ? '1h 50m' : '24:15',
+        thumbnail: anime.poster,
+        hindiDubbed: true,
+        releaseDate: anime.releaseDate || '2024',
+        synopsis: `Episode ${initEpNum} of ${anime.title} in Hindi audio.`,
+        downloadLinks: [],
+      };
     }
-  );
+    return (
+      anime.seasons?.[0]?.episodes?.[0] || {
+        id: `ep-${anime.id}-1-1`,
+        episodeNumber: 1,
+        title: 'Episode 1: The Beginning',
+        duration: anime.isMovie ? '1h 50m' : '24:15',
+        thumbnail: anime.poster,
+        hindiDubbed: true,
+        releaseDate: anime.releaseDate || '2024',
+        synopsis: `Episode 1 of ${anime.title} in Hindi audio.`,
+        downloadLinks: [],
+      }
+    );
+  });
 
   const [showInfoModal, setShowInfoModal] = useState<boolean>(false);
   const [showSeasonDropdown, setShowSeasonDropdown] = useState<boolean>(false);
@@ -126,13 +154,27 @@ export const WatchPage: React.FC<WatchPageProps> = ({
         ...prev,
         synopsis: remoteDetails.synopsis || prev.synopsis,
         backdrop: remoteDetails.backdrop || prev.backdrop,
+        genres: (remoteDetails.genres && remoteDetails.genres.length > 0) ? remoteDetails.genres : prev.genres,
         seasons:
           remoteDetails.seasons && remoteDetails.seasons.length > 0
             ? (remoteDetails.seasons as any)
             : prev.seasons,
       }));
+
+      // If initial episode was requested, ensure it stays selected when remote seasons arrive
+      if (anime.initialEpisodeNumber) {
+        const targetSeason = (remoteDetails.seasons || []).find(
+          (s: any) => s.seasonNumber === initSNum
+        );
+        const targetEp = targetSeason?.episodes?.find(
+          (e: any) => e.episodeNumber === initEpNum
+        );
+        if (targetEp) {
+          setSelectedEpisode(targetEp);
+        }
+      }
     }
-  }, [remoteDetails]);
+  }, [remoteDetails, anime.initialEpisodeNumber, anime.initialSeasonNumber, initSNum, initEpNum]);
 
   // Available seasons list
   const seasonList = useMemo(() => {
@@ -266,13 +308,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({
     }
   }, [currentCacheKey, streamCache, resolveCurrentStream]);
 
-  // Track watch progress (throttled to 5 seconds to prevent AsyncStorage I/O bottlenecks)
+  // Track watch progress (throttled to 4 seconds to prevent AsyncStorage I/O bottlenecks)
   const lastProgressSaveRef = useRef<number>(0);
   const handleTimeUpdate = useCallback((currentSec: number, totalDurationSec: number) => {
     const now = Date.now();
-    if (currentSec > 5 && now - lastProgressSaveRef.current > 5000) {
+    if (currentSec > 3 && now - lastProgressSaveRef.current > 4000) {
       lastProgressSaveRef.current = now;
-      LocalStorageService.updateWatchProgress({
+      const historyItem = {
         animeId: detailedAnime.id,
         animeTitle: detailedAnime.title,
         poster: detailedAnime.poster,
@@ -281,9 +323,13 @@ export const WatchPage: React.FC<WatchPageProps> = ({
         episodeTitle: selectedEpisode.title,
         progressSeconds: Math.floor(currentSec),
         durationSeconds: Math.floor(totalDurationSec),
-      });
+        updatedAt: now,
+      };
+      // Persist to local disk and update Redux for instantaneous Profile live sync
+      LocalStorageService.updateWatchProgress(historyItem);
+      dispatch(updateWatchHistory(historyItem));
     }
-  }, [detailedAnime.id, detailedAnime.title, detailedAnime.poster, activeSeason?.seasonNumber, selectedEpisode.episodeNumber, selectedEpisode.title]);
+  }, [dispatch, detailedAnime.id, detailedAnime.title, detailedAnime.poster, activeSeason?.seasonNumber, selectedEpisode.episodeNumber, selectedEpisode.title]);
 
   const handleToggleLike = useCallback(() => {
     if (userLiked) {

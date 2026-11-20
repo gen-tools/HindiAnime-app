@@ -38,6 +38,7 @@ import {
   Play,
   Volume2,
   Star,
+  Mail,
 } from 'lucide-react-native';
 import { Anime } from '../types/anime';
 import { HindiAnimeLogo } from './HindiAnimeLogo';
@@ -45,6 +46,8 @@ import { AnimeCard } from './AnimeCard';
 import { PlayCircleButton } from './PlayCircleButton';
 import { getImageSource } from '../utils/imageHelper';
 import { LocalStorageService, WatchHistoryItem, UserProfile } from '../services/storage';
+import { useAppDispatch, useAppSelector } from '../store';
+import { removeWatchHistory, clearWatchHistory } from '../store/animeSlice';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -240,8 +243,9 @@ const ProfileView_: React.FC<ProfileViewProps> = ({
   const [defaultQuality, setDefaultQuality] = useState<'auto' | '1080p' | '720p' | '480p' | '360p'>('auto');
   const [defaultAudio, setDefaultAudio] = useState<'Hindi' | 'Japanese' | 'English'>('Hindi');
 
-  // Watch history
-  const [watchHistory, setWatchHistory] = useState<WatchHistoryItem[]>([]);
+  const dispatch = useAppDispatch();
+  const reduxWatchHistory = useAppSelector((state) => state.anime.watchHistory);
+  const watchHistory = reduxWatchHistory;
 
   // Load everything from storage on mount
   useEffect(() => {
@@ -252,7 +256,6 @@ const ProfileView_: React.FC<ProfileViewProps> = ({
     setDataSaver(prefs.dataSaver ?? false);
     setDefaultQuality((prefs.defaultQuality as any) ?? 'auto');
     setDefaultAudio((prefs.defaultAudio as any) ?? 'Hindi');
-    setWatchHistory(LocalStorageService.getWatchHistory());
     setProfile(LocalStorageService.getProfile());
   }, []);
 
@@ -301,11 +304,11 @@ const ProfileView_: React.FC<ProfileViewProps> = ({
 
   const handleRemoveHistoryItem = (animeId: string) => {
     LocalStorageService.removeWatchHistoryItem(animeId);
-    setWatchHistory((prev) => prev.filter((item) => item.animeId !== animeId));
+    dispatch(removeWatchHistory(animeId));
   };
   const handleClearAllHistory = () => {
     LocalStorageService.clearWatchHistory();
-    setWatchHistory([]);
+    dispatch(clearWatchHistory());
   };
   const handleWatchHistoryClick = (animeId: string) => {
     const target = animeList.find((a) => a.id === animeId);
@@ -807,6 +810,32 @@ const ProfileView_: React.FC<ProfileViewProps> = ({
           </View>
         </View>
 
+        {/* 3.5. CONTACT */}
+        <View style={styles.followSection}>
+          <View style={styles.followHeader}>
+            <View style={styles.followDot} />
+            <Text style={styles.followTitle}>CONTACT</Text>
+            <View style={{ flex: 1 }} />
+            <Text style={styles.followHandle}>Support & Inquiries</Text>
+          </View>
+
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => Linking.openURL('mailto:contact@hindi-anime.com?subject=HindiAnime%20Support').catch(() => {})}
+            style={styles.contactCardRow}
+          >
+            <View style={[styles.socialIconCircle, { backgroundColor: 'rgba(34,197,94,0.15)', borderColor: 'rgba(34,197,94,0.3)' }]}>
+              <Mail size={18} color="#22c55e" />
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={styles.contactCardTitle}>Email Support</Text>
+              <Text style={styles.contactEmailText}>contact@hindi-anime.com</Text>
+              <Text style={styles.contactDescText}>Queries, feedback, and stream requests</Text>
+            </View>
+            <ChevronRight size={16} color="#7e8b83" />
+          </TouchableOpacity>
+        </View>
+
         {/* 4. FOLLOW US */}
         <View style={styles.followSection}>
           <View style={styles.followHeader}>
@@ -1120,6 +1149,32 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#fbbf24',
     letterSpacing: 0.3,
+  },
+
+  // ── Contact ──
+  contactCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#142019',
+    borderWidth: 1,
+    borderColor: '#1d3025',
+    gap: 12,
+  },
+  contactCardTitle: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  contactEmailText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#22c55e',
+  },
+  contactDescText: {
+    fontSize: 10,
+    color: '#7e8b83',
   },
 
   // ── Follow ──

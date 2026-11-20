@@ -88,6 +88,8 @@ export interface Anime {
   isFreshCartoonFilm?: boolean;
   primaryLanguage?: 'Hindi' | 'Tamil' | 'Telugu' | 'Japanese' | 'English';
   languagesSupported?: string[];
+  initialEpisodeNumber?: number;
+  initialSeasonNumber?: number;
   seasons: Season[];
   servers: StreamingServer[];
   comments?: AnimeComment[];

@@ -34,51 +34,11 @@ import { WatchPage } from './src/components/WatchPage';
 import { FloatingDock, NavTab } from './src/components/FloatingDock';
 import { LocalStorageService } from './src/services/storage';
 
-// ─── Prevent native splash from auto-hiding BEFORE any React renders ──────────
-// Must be called at module level (not inside component) for it to work reliably.
+// ─── Prevent native splash from auto-hiding BEFORE React renders ───────────
+// Must be called at module level for it to work reliably.
 try {
-  SplashScreen.preventAutoHideAsync().catch(() => {
-    // preventAutoHideAsync may throw in Expo Go or when already hidden — ignore.
-  });
-  // Smooth fade-out when we hide
-  SplashScreen.setOptions({ fade: true, duration: 350 });
+  SplashScreen.preventAutoHideAsync().catch(() => {});
 } catch {}
-
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-
-// ─── JS-side splash overlay ───────────────────────────────────────────────────
-// Covers the brief gap between native splash hide + React content paint,
-// then fades out once app is ready.
-const JsSplashOverlay: React.FC<{ visible: boolean }> = ({ visible }) => {
-  const opacity = useRef(new Animated.Value(1)).current;
-  const [mounted, setMounted] = useState(true);
-
-  useEffect(() => {
-    if (!visible) {
-      Animated.timing(opacity, {
-        toValue: 0,
-        duration: 350,
-        useNativeDriver: true,
-      }).start(() => setMounted(false));
-    }
-  }, [visible, opacity]);
-
-  if (!mounted) return null;
-
-  return (
-    <Animated.View
-      style={[styles.splashOverlay, { opacity }]}
-      pointerEvents="none"
-    >
-      <Image
-        source={require('./assets/splash.png')}
-        style={styles.splashImage}
-        resizeMode="cover"
-        fadeDuration={0}
-      />
-    </Animated.View>
-  );
-};
 
 // ─── App Content ──────────────────────────────────────────────────────────────
 function AppContent() {
@@ -95,9 +55,6 @@ function AppContent() {
   const [animeHistory, setAnimeHistory] = useState<Anime[]>([]);
   const [isAnyFullscreen, setIsAnyFullscreen] = useState(false);
 
-  // true = show JS splash overlay, false = fade it out
-  const [splashVisible, setSplashVisible] = useState(true);
-
   // ── Orientation + Nav bar setup ───────────────────────────────────────────
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => null);
@@ -109,28 +66,20 @@ function AppContent() {
   // ── Homepage network fetch (RTK Query) ────────────────────────────────────
   const { data: homepageData } = useGetHomepageQuery();
 
-  // ── Storage hydration + splash control ───────────────────────────────────
-  // Strategy:
-  //   1. Hydrate from AsyncStorage (fast — usually <100ms)
-  //   2. Hide native splash after storage read completes (or 1000ms failsafe)
-  //   3. Fade out JS overlay after React paints
+  // ── Storage hydration + native splash dismissal ───────────────────────────
+  // Hydrates storage instantly from disk cache, then dismisses the single native splash.
   useEffect(() => {
     let cancelled = false;
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const finishSplash = () => {
+    const dismissSplash = () => {
       try {
         SplashScreen.hideAsync().catch(() => null);
       } catch {}
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          if (!cancelled) setSplashVisible(false);
-        });
-      });
     };
 
-    // Failsafe: if storage hydration hangs, dismiss splash after 1000ms
-    fallbackTimer = setTimeout(finishSplash, 1000);
+    // Failsafe: guarantee native splash is dismissed even if disk I/O stalls
+    fallbackTimer = setTimeout(dismissSplash, 800);
 
     LocalStorageService.init()
       .then(() => {
@@ -139,6 +88,7 @@ function AppContent() {
         const storedWatchlist = LocalStorageService.getWatchlist();
         const storedFavorites = LocalStorageService.getFavorites();
         const snapshot = LocalStorageService.getHomepageSnapshot();
+        const history = LocalStorageService.getWatchHistory();
 
         dispatch(
           hydrateStorage({
@@ -146,6 +96,7 @@ function AppContent() {
             favoriteAnimeIds: storedFavorites || [],
             cachedList: snapshot?.animeList,
             cachedLatest: snapshot?.latestEpisodes,
+            watchHistory: history || [],
           })
         );
       })
@@ -154,7 +105,7 @@ function AppContent() {
       })
       .finally(() => {
         if (fallbackTimer) clearTimeout(fallbackTimer);
-        finishSplash();
+        dismissSplash();
       });
 
     return () => {
@@ -358,9 +309,6 @@ function AppContent() {
             favoritesCount={savedAnimeIds.length}
           />
         )}
-
-        {/* JS-side splash overlay — fades out once app is ready */}
-        <JsSplashOverlay visible={splashVisible} />
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -389,18 +337,5 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
     height: '100%',
-  },
-  splashOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: SCREEN_W,
-    height: SCREEN_H,
-    zIndex: 9999,
-    backgroundColor: '#000000',
-  },
-  splashImage: {
-    width: SCREEN_W,
-    height: SCREEN_H,
   },
 });

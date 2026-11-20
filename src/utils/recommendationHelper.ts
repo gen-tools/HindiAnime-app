@@ -1,8 +1,19 @@
 import { Anime } from '../types/anime';
 
+// Non-informative tags present on almost all titles in the app
+const GENERIC_TAGS = new Set([
+  'hindi dubbed',
+  'hindi',
+  'dubbed',
+  'series',
+  'movie',
+  'all',
+]);
+
 /**
  * Calculates a genuine relevance score for candidate anime against a target anime
- * based on genre overlap, category/type matching, high ratings, and popularity.
+ * based on true genre overlap (excluding generic filler tags), type matching,
+ * and high ratings. Never recommends the target title itself.
  */
 export function getRecommendedAnime(
   targetAnime: Anime,
@@ -11,37 +22,45 @@ export function getRecommendedAnime(
 ): Anime[] {
   if (!targetAnime || !allAnime || allAnime.length === 0) return [];
 
-  const targetGenres = new Set(
-    (targetAnime.genres || []).map((g) => g.trim().toLowerCase())
+  // Extract meaningful genres of target anime
+  const targetDistinctGenres = new Set(
+    (targetAnime.genres || [])
+      .map((g) => g.trim().toLowerCase())
+      .filter((g) => g && !GENERIC_TAGS.has(g))
   );
+
   const targetType =
     targetAnime.isMovie || targetAnime.type === 'Movie' ? 'Movie' : 'Series';
 
   const scored: { anime: Anime; score: number }[] = [];
 
   for (const candidate of allAnime) {
+    // Avoid recommending the current / same title
     if (candidate.id === targetAnime.id) continue;
 
     let score = 0;
-    const candidateGenres = candidate.genres || [];
+    const candidateGenres = (candidate.genres || [])
+      .map((g) => g.trim().toLowerCase())
+      .filter((g) => g && !GENERIC_TAGS.has(g));
 
-    // Genre overlap: +15 points per matching genre
+    // True genre overlap: +20 points per distinct genre match
     let genreMatches = 0;
     for (const g of candidateGenres) {
-      if (targetGenres.has(g.trim().toLowerCase())) {
-        score += 15;
+      if (targetDistinctGenres.has(g)) {
+        score += 20;
         genreMatches++;
       }
     }
 
     // Multi-genre overlap bonus
-    if (genreMatches >= 2) score += 10;
+    if (genreMatches >= 2) score += 15;
+    if (genreMatches >= 3) score += 20;
 
-    // Type match: +8 points (Movie with Movie, Series with Series)
+    // Type match: +6 points (Movie with Movie, Series with Series)
     const candType =
       candidate.isMovie || candidate.type === 'Movie' ? 'Movie' : 'Series';
     if (candType === targetType) {
-      score += 8;
+      score += 6;
     }
 
     // Rating quality score
@@ -49,9 +68,9 @@ export function getRecommendedAnime(
       score += Math.min(10, candidate.rating);
     }
 
-    // Popularity / Trending boost
-    if (candidate.isPopular || candidate.isTrending) {
-      score += 4;
+    // Slight bonus for popular/trending titles within matching genres
+    if ((candidate.isPopular || candidate.isTrending) && genreMatches > 0) {
+      score += 5;
     }
 
     scored.push({ anime: candidate, score });

@@ -1,5 +1,6 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 import { Anime, Episode, Season, LatestEpisodeItem } from '../../types/anime';
+import { mergeIntoCatalog } from '../animeSlice';
 import {
   getApiBaseUrl,
   getApiHeaders,
@@ -181,6 +182,14 @@ export const animeApi = createApi({
         return `/data/search?q=${encodeURIComponent(q)}`;
       },
       keepUnusedDataFor: 600, // 10 minutes cache
+      async onQueryStarted(_args, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          if (data && data.length > 0) {
+            dispatch(mergeIntoCatalog(data));
+          }
+        } catch {}
+      },
       transformResponse: (response: any) => {
         const rawResults: any[] = response?.results || [];
         return rawResults
@@ -231,6 +240,10 @@ export const animeApi = createApi({
           };
         });
 
+        const genres = Array.isArray(data.genres) && data.genres.length > 0
+          ? data.genres.map((g: string) => String(g).trim()).filter(Boolean)
+          : undefined;
+
         return {
           id: clean,
           title: data.title ? formatTitle(data.title) : undefined,
@@ -238,6 +251,7 @@ export const animeApi = createApi({
           backdrop: data.backdrop,
           rating: data.rating ? Number(data.rating) : undefined,
           seasons,
+          genres,
         };
       },
     }),
@@ -272,6 +286,14 @@ export const animeApi = createApi({
       keepUnusedDataFor: 900,
       // Each {kind, page} combination is a separate cache entry
       serializeQueryArgs: ({ queryArgs }) => `${queryArgs.kind}-${queryArgs.page}`,
+      async onQueryStarted(_args, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          if (data?.items?.length) {
+            dispatch(mergeIntoCatalog(data.items));
+          }
+        } catch {}
+      },
       transformResponse: (response: any, _meta, { kind, page }) => {
         const inner = response?.results || {};
         const rawList: any[] = Array.isArray(inner.results) ? inner.results : (Array.isArray(inner) ? inner : []);
